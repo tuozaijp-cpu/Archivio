@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Archivio.Models;
 using Archivio.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -59,8 +60,9 @@ namespace Archivio.Views
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Error("レイアウト設定の復元に失敗しました", ex);
             }
         }
 
@@ -84,8 +86,9 @@ namespace Archivio.Views
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Error("レイアウト設定の保存に失敗しました", ex);
             }
         }
 
@@ -93,7 +96,7 @@ namespace Archivio.Views
 
         private async void OnSaveClicked(object sender, RoutedEventArgs e)
         {
-            await ViewModel.SaveSelectedVideoMetadataAsync();
+            await ViewModel.Details.SaveMetadataAsync();
         }
 
         private void ReleaseDatePicker_DateChanged(object sender, DatePickerValueChangedEventArgs args)
@@ -134,17 +137,17 @@ namespace Archivio.Views
 
         private async void AddImageButton_Click(object sender, RoutedEventArgs e)
         {
-            await ViewModel.AddCoverArtImageAsync();
+            await ViewModel.Details.AddCoverArtImageAsync();
         }
 
         private async void ReplaceImageButton_Click(object sender, RoutedEventArgs e)
         {
-            await ViewModel.ReplaceCoverArtImageAsync();
+            await ViewModel.Details.ReplaceCoverArtImageAsync();
         }
 
         private void DeleteImageButton_Click(object sender, RoutedEventArgs e)
         {
-            ViewModel.DeleteCoverArtImage();
+            ViewModel.Details.DeleteCoverArtImage();
         }
 
         private async void DataGrid_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
@@ -173,7 +176,7 @@ namespace Archivio.Views
 
         private async void SaveImageButton_Click(object sender, RoutedEventArgs e)
         {
-            await ViewModel.SaveSelectedVideoCoverArtAsync();
+            await ViewModel.Details.SaveCoverArtAsync();
         }
 
         private void FilterTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -479,20 +482,39 @@ namespace Archivio.Views
                 var newName = textBox.Text;
                 if (!string.IsNullOrWhiteSpace(newName) && newName != selectedVideo.FileName)
                 {
-                    selectedVideo.FileName = newName;
+                    await ViewModel.RenameVideoAsync(selectedVideo, newName);
                 }
             }
         }
-    }
 
-    public class FilterValueItem : ViewModelBase
-    {
-        private bool _isChecked;
-        public string Value { get; set; } = string.Empty;
-        public bool IsChecked
+        private async void DeleteMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            get => _isChecked;
-            set => SetProperty(ref _isChecked, value);
+            var selectedVideo = ViewModel.SelectedVideo;
+            if (selectedVideo == null) return;
+
+            var dialog = new ContentDialog
+            {
+                Title = "ファイルの削除確認",
+                Content = $"本当に「{selectedVideo.FileName}」を削除しますか？\nこの操作は取り消せません。",
+                PrimaryButtonText = "削除",
+                CloseButtonText = "キャンセル",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = this.XamlRoot
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                await ViewModel.DeleteVideoAsync(selectedVideo);
+            }
+        }
+
+        private async void ReMuxMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var selectedVideo = ViewModel.SelectedVideo;
+            if (selectedVideo == null) return;
+
+            await ViewModel.ReMuxVideoAsync(selectedVideo);
         }
     }
 }

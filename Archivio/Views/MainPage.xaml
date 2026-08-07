@@ -141,6 +141,8 @@
                     <controls:DataGrid.ContextFlyout>
                         <MenuFlyout>
                             <MenuFlyoutItem Text="ファイル名の変更" Click="RenameMenuItem_Click" />
+                            <MenuFlyoutItem Text="ファイルの削除" Click="DeleteMenuItem_Click" />
+                            <MenuFlyoutItem Text="Ffmpegでの再MUX" Click="ReMuxMenuItem_Click" />
                         </MenuFlyout>
                     </controls:DataGrid.ContextFlyout>
                     <controls:DataGrid.Columns>

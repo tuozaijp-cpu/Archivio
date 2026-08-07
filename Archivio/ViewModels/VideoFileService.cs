@@ -17,7 +17,8 @@ namespace Archivio.ViewModels
     {
         private static readonly HashSet<string> SupportedVideoExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
-            ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".mpeg", ".mpg"
+            ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".mpeg", ".mpg",
+            ".ts", ".m2ts", ".mts", ".3gp", ".3g2", ".flv", ".ogv", ".vob", ".asf"
         };
 
         public async Task<IReadOnlyList<StorageFile>> EnumerateVideoFilesAsync(StorageFolder folder, bool includeSubfolders, CancellationToken cancellationToken)

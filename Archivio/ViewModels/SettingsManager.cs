@@ -18,6 +18,8 @@ namespace Archivio.ViewModels
         public double PropertiesColumnWidth { get; set; } = -1;
         public Dictionary<string, double> ColumnWidths { get; set; } = new();
         public bool IncludeSubfolders { get; set; } = true;
+        /// <summary>任意の FFprobe 実行ファイル。空欄の場合は PATH 上の ffprobe を試す。</summary>
+        public string FfprobePath { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -45,9 +47,11 @@ namespace Archivio.ViewModels
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Error("設定ファイルの読み込みに失敗しました", ex, SettingsFile);
             }
+
             return new AppSettings();
         }
 
@@ -59,8 +63,9 @@ namespace Archivio.ViewModels
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(SettingsFile, json);
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Error("設定ファイルの保存に失敗しました", ex, SettingsFile);
             }
         }
     }

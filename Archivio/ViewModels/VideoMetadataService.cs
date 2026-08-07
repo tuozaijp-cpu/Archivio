@@ -32,6 +32,8 @@ namespace Archivio.ViewModels
     {
         public VideoMetadataSnapshot Metadata { get; init; } = new();
         public bool WindowsPropertiesLoaded { get; init; }
+        /// <summary>FFprobe、Windows API、Shell のいずれかから技術情報を取得できたか。</summary>
+        public bool TechnicalPropertiesLoaded { get; init; }
         public IReadOnlyList<string> WindowsPropertyErrors { get; init; } = Array.Empty<string>();
     }
 
@@ -62,10 +64,19 @@ namespace Archivio.ViewModels
     {
         private const string ArchivioTagOwner = "com.archivio";
         private const string ReleaseDateTagName = "ReleaseDate";
+        private const string RatingTagName = "Rating";
         private static readonly System.Threading.SemaphoreSlim WindowsPropertyReadSemaphore = new(1, 1);
+        private readonly IMediaProbeService _mediaProbeService;
+
+        public VideoMetadataService(IMediaProbeService? mediaProbeService = null)
+        {
+            _mediaProbeService = mediaProbeService ?? new MediaProbeService();
+        }
 
         public async Task<VideoMetadataLoadResult> LoadMetadataAsync(StorageFile file)
         {
+            // FFprobe が利用できれば最優先する。存在しない・失敗した環境では Windows API の結果になる。
+            var probeResult = await _mediaProbeService.ProbeAsync(file);
             return await Task.Run(() =>
             {
                 var snapshot = new VideoMetadataSnapshot();
@@ -81,10 +92,26 @@ namespace Archivio.ViewModels
                         snapshot.Comment = tagFile.Tag.Comment ?? string.Empty;
                         snapshot.Category = string.Join("; ", tagFile.Tag.Genres ?? Array.Empty<string>());
                         snapshot.CatalogNumber = tagFile.Tag.Grouping ?? string.Empty;
-                        snapshot.Publisher = tagFile.Tag.Publisher ?? string.Empty;
                         snapshot.ContentDistributor = tagFile.Tag.Copyright ?? string.Empty;
-                        snapshot.Rating = GetAppleTag(tagFile, create: false)?.GetDashBox(ArchivioTagOwner, "Rating") ?? string.Empty;
-                        snapshot.ReleaseDate = ReadReleaseDate(tagFile);
+
+                        var extension = Path.GetExtension(file.Path);
+                        if (extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
+                            || extension.Equals(".webm", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var mkvTag = tagFile.GetTag(TagTypes.Matroska, create: false) as TagLib.Matroska.Tag;
+                            snapshot.Publisher = GetMatroskaCustomText(mkvTag, "PUBLISHER");
+                            if (string.IsNullOrWhiteSpace(snapshot.Publisher))
+                            {
+                                snapshot.Publisher = tagFile.Tag.Publisher ?? string.Empty;
+                            }
+                        }
+                        else
+                        {
+                            snapshot.Publisher = tagFile.Tag.Publisher ?? string.Empty;
+                        }
+
+                        snapshot.Rating = ReadCustomText(tagFile, file.Path, RatingTagName);
+                        snapshot.ReleaseDate = ReadReleaseDate(tagFile, file.Path);
                         snapshot.ReleaseDateText = snapshot.ReleaseDate.Year > 1900 ? snapshot.ReleaseDate.ToString("yyyy-MM-dd") : string.Empty;
 
                         PopulateMediaProperties(snapshot, tagFile);
@@ -95,48 +122,52 @@ namespace Archivio.ViewModels
                     AppLogger.Error("ファイル内タグの読み込みに失敗しました", ex, file.Path);
                 }
 
+                ApplyMediaProbeResult(snapshot, probeResult);
+
+                var shellLockTaken = false;
                 try
                 {
                     // Windows の Property Handler は動画形式ごとに実装が異なり、並列アクセスで不安定になるものがある。
                     // アプリ内では一度に一件だけ取得する。
                     WindowsPropertyReadSemaphore.Wait();
+                    shellLockTaken = true;
                     using var shellFile = ShellFile.FromFilePath(file.Path);
                     var properties = shellFile.Properties;
 
                     var frameRate = GetFirstShellPropertyText(properties, new[] { "System.Video.FrameRate", "System.Media.FrameRate" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(frameRate))
                     {
-                        snapshot.FrameRate = NormalizeFrameRate(frameRate);
+                        snapshot.FrameRate = ValueOrExisting(snapshot.FrameRate, NormalizeFrameRate(frameRate));
                     }
 
                     var videoBitrate = GetFirstShellPropertyText(properties, new[] { "System.Video.EncodingBitrate", "System.Video.BitRate", "System.Video.Bitrate" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(videoBitrate))
                     {
-                        snapshot.VideoBitrate = NormalizeBitrate(videoBitrate);
+                        snapshot.VideoBitrate = ValueOrExisting(snapshot.VideoBitrate, NormalizeBitrate(videoBitrate));
                     }
 
                     var videoCompression = GetFirstShellPropertyText(properties, new[] { "System.Video.Compression", "System.Video.CompressionType", "System.Video.Compressor" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(videoCompression))
                     {
-                        snapshot.VideoCompression = videoCompression;
+                        snapshot.VideoCompression = ValueOrExisting(snapshot.VideoCompression, videoCompression);
                     }
 
                     var audioSampleRate = GetFirstShellPropertyText(properties, new[] { "System.Audio.SampleRate", "System.Audio.SamplingRate" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(audioSampleRate))
                     {
-                        snapshot.AudioSampleRate = audioSampleRate;
+                        snapshot.AudioSampleRate = ValueOrExisting(snapshot.AudioSampleRate, audioSampleRate);
                     }
 
                     var audioBitrate = GetFirstShellPropertyText(properties, new[] { "System.Audio.EncodingBitrate", "System.Audio.BitRate", "System.Audio.Bitrate" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(audioBitrate))
                     {
-                        snapshot.AudioBitrate = NormalizeBitrate(audioBitrate);
+                        snapshot.AudioBitrate = ValueOrExisting(snapshot.AudioBitrate, NormalizeBitrate(audioBitrate));
                     }
 
                     var audioFormat = GetFirstShellPropertyText(properties, new[] { "System.Audio.Format", "System.Audio.EncodingFormat" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(audioFormat))
                     {
-                        snapshot.AudioFormat = audioFormat;
+                        snapshot.AudioFormat = ValueOrExisting(snapshot.AudioFormat, audioFormat);
                     }
 
                 }
@@ -147,13 +178,17 @@ namespace Archivio.ViewModels
                 }
                 finally
                 {
-                    WindowsPropertyReadSemaphore.Release();
+                    if (shellLockTaken)
+                    {
+                        WindowsPropertyReadSemaphore.Release();
+                    }
                 }
 
                 return new VideoMetadataLoadResult
                 {
                     Metadata = snapshot,
                     WindowsPropertiesLoaded = windowsPropertyErrors.Count == 0,
+                    TechnicalPropertiesLoaded = probeResult.HasValues || windowsPropertyErrors.Count == 0,
                     WindowsPropertyErrors = windowsPropertyErrors
                 };
             });
@@ -213,6 +248,16 @@ namespace Archivio.ViewModels
                 }
 
                 var canonicalErrors = new List<string>();
+                var unsupportedCustomFields = fieldsToPersist
+                    .Where(field => field is "Rating" or "ReleaseDate")
+                    .Where(field => !SupportsCustomArchivioTags(file.Path))
+                    .ToList();
+                if (unsupportedCustomFields.Count > 0)
+                {
+                    canonicalErrors.Add($"{Path.GetExtension(file.Path)} は Archivio 固有項目（{string.Join("、", unsupportedCustomFields)}）の埋め込み保存に対応していません。");
+                    fieldsToPersist = fieldsToPersist.Except(unsupportedCustomFields, StringComparer.OrdinalIgnoreCase).ToList();
+                }
+
                 try
                 {
                     using var tagFile = TagLib.File.Create(file.Path);
@@ -246,26 +291,16 @@ namespace Archivio.ViewModels
                         if (fieldsToPersist.Contains("ReleaseDate"))
                         {
                             tagFile.Tag.Year = metadata.ReleaseDate.Year > 1900 ? (uint)metadata.ReleaseDate.Year : 0;
-                            var appleTag = GetAppleTag(tagFile, create: true);
-                            if (appleTag != null)
-                            {
-                                appleTag.SetDashBox(
-                                    ArchivioTagOwner,
-                                    ReleaseDateTagName,
-                                    metadata.ReleaseDate.Year > 1900
-                                        ? metadata.ReleaseDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
-                                        : string.Empty);
-                            }
+                            SetCustomText(tagFile, file.Path, ReleaseDateTagName,
+                                metadata.ReleaseDate.Year > 1900
+                                    ? metadata.ReleaseDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                                    : string.Empty);
                             isDirty = true;
                         }
 
                         if (fieldsToPersist.Contains("Rating"))
                         {
-                            var appleTag = GetAppleTag(tagFile, create: true);
-                            if (appleTag != null)
-                            {
-                                appleTag.SetDashBox(ArchivioTagOwner, "Rating", metadata.Rating ?? string.Empty);
-                            }
+                            SetCustomText(tagFile, file.Path, RatingTagName, metadata.Rating ?? string.Empty);
                             isDirty = true;
                         }
 
@@ -288,6 +323,15 @@ namespace Archivio.ViewModels
 
                         if (fieldsToPersist.Contains("Publisher"))
                         {
+                            var extension = Path.GetExtension(file.Path);
+                            if (extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
+                                || extension.Equals(".webm", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var mkvTag = tagFile.GetTag(TagTypes.Matroska, create: true) as TagLib.Matroska.Tag
+                                    ?? throw new NotSupportedException("Matroska タグを作成できません。");
+                                SetMatroskaCustomText(mkvTag, "PUBLISHER", metadata.Publisher ?? string.Empty);
+                            }
+                            
                             tagFile.Tag.Publisher = metadata.Publisher;
                             isDirty = true;
                         }
@@ -314,7 +358,8 @@ namespace Archivio.ViewModels
                     canonicalErrors.Add($"ファイル内タグの保存に失敗しました: {ex.Message}");
                 }
 
-                if (canonicalErrors.Count == 0)
+                // 非対応の独自項目があっても、対応する標準項目の保存結果は検証する。
+                if (fieldsToPersist.Count > 0 && canonicalErrors.All(error => !error.StartsWith("ファイル内タグ")))
                 {
                     try
                     {
@@ -352,7 +397,8 @@ namespace Archivio.ViewModels
                             {
                                 Data = picture.Data.Data,
                                 MimeType = picture.MimeType ?? "image/jpeg",
-                                Description = picture.Description ?? string.Empty
+                                Description = picture.Description ?? string.Empty,
+                                Type = picture.Type
                             });
                         }
                     }
@@ -379,7 +425,8 @@ namespace Archivio.ViewModels
                         var pic = new TagLib.Picture(new ByteVector(coverArt?.Data ?? Array.Empty<byte>()))
                         {
                             MimeType = coverArt?.MimeType ?? "image/jpeg",
-                            Description = coverArt?.Description ?? string.Empty
+                            Description = coverArt?.Description ?? string.Empty,
+                            Type = coverArt?.Type ?? PictureType.FrontCover
                         };
                         pics.Add(pic);
                     }
@@ -422,6 +469,36 @@ namespace Archivio.ViewModels
             snapshot.AudioSampleRate = GetNumericStringProperty(properties, "AudioSampleRate");
             snapshot.AudioBitrate = GetNumericStringProperty(properties, "AudioBitrate");
             snapshot.AudioFormat = GetStringProperty(properties, "AudioFormat");
+        }
+
+        private static void ApplyMediaProbeResult(VideoMetadataSnapshot snapshot, MediaProbeResult result)
+        {
+            if (!result.HasValues)
+            {
+                return;
+            }
+
+            if (result.Duration is { } duration) snapshot.Duration = ValueOrExisting(snapshot.Duration, FormatDuration(duration));
+            if (result.FrameWidth is { } width) snapshot.FrameWidth = ValueOrExisting(snapshot.FrameWidth, width.ToString(CultureInfo.InvariantCulture));
+            if (result.FrameHeight is { } height) snapshot.FrameHeight = ValueOrExisting(snapshot.FrameHeight, height.ToString(CultureInfo.InvariantCulture));
+            if (result.FrameRate is { } frameRate) snapshot.FrameRate = ValueOrExisting(snapshot.FrameRate, frameRate.ToString("0.###", CultureInfo.InvariantCulture));
+            if (result.VideoBitrate is { } videoBitrate) snapshot.VideoBitrate = ValueOrExisting(snapshot.VideoBitrate, FormatBitrate(videoBitrate));
+            snapshot.VideoCompression = ValueOrExisting(snapshot.VideoCompression, result.VideoCodec);
+            if (result.AudioSampleRate is { } sampleRate) snapshot.AudioSampleRate = ValueOrExisting(snapshot.AudioSampleRate, $"{sampleRate} Hz");
+            if (result.AudioBitrate is { } audioBitrate) snapshot.AudioBitrate = ValueOrExisting(snapshot.AudioBitrate, FormatBitrate(audioBitrate));
+            snapshot.AudioFormat = ValueOrExisting(snapshot.AudioFormat, result.AudioCodec);
+        }
+
+        private static string ValueOrExisting(string destination, string? value)
+        {
+            return string.IsNullOrWhiteSpace(destination) && !string.IsNullOrWhiteSpace(value) ? value : destination;
+        }
+
+        private static string FormatBitrate(long bitsPerSecond)
+        {
+            return bitsPerSecond >= 1000
+                ? $"{bitsPerSecond / 1000d:0.##} kbps"
+                : $"{bitsPerSecond} bps";
         }
 
         private static string FormatDuration(TimeSpan duration)
@@ -481,7 +558,6 @@ namespace Archivio.ViewModels
         {
             using var savedFile = TagLib.File.Create(path);
             var tag = savedFile.Tag ?? throw new InvalidDataException("ファイル内タグを読み取れません。");
-            var appleTag = GetAppleTag(savedFile, create: false);
 
             foreach (var field in fields)
             {
@@ -492,11 +568,16 @@ namespace Archivio.ViewModels
                     "Comment" => string.Equals(tag.Comment ?? string.Empty, expected.Comment ?? string.Empty, StringComparison.Ordinal),
                     "Category" => tag.Genres.SequenceEqual(SplitValues(expected.Category), StringComparer.Ordinal),
                     "CatalogNumber" => string.Equals(tag.Grouping ?? string.Empty, expected.CatalogNumber ?? string.Empty, StringComparison.Ordinal),
-                    "Publisher" => string.Equals(tag.Publisher ?? string.Empty, expected.Publisher ?? string.Empty, StringComparison.Ordinal),
+                    "Publisher" => string.Equals(
+                        (Path.GetExtension(path).Equals(".mkv", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(path).Equals(".webm", StringComparison.OrdinalIgnoreCase))
+                            ? GetMatroskaCustomText(savedFile.GetTag(TagTypes.Matroska, create: false) as TagLib.Matroska.Tag, "PUBLISHER")
+                            : (tag.Publisher ?? string.Empty),
+                        expected.Publisher ?? string.Empty,
+                        StringComparison.Ordinal),
                     "ContentDistributor" => string.Equals(tag.Copyright ?? string.Empty, expected.ContentDistributor ?? string.Empty, StringComparison.Ordinal),
-                    "Rating" => string.Equals(appleTag?.GetDashBox(ArchivioTagOwner, "Rating") ?? string.Empty, expected.Rating ?? string.Empty, StringComparison.Ordinal),
+                    "Rating" => string.Equals(ReadCustomText(savedFile, path, RatingTagName), expected.Rating ?? string.Empty, StringComparison.Ordinal),
                     "ReleaseDate" => tag.Year == (expected.ReleaseDate.Year > 1900 ? (uint)expected.ReleaseDate.Year : 0)
-                        && string.Equals(appleTag?.GetDashBox(ArchivioTagOwner, ReleaseDateTagName) ?? string.Empty,
+                        && string.Equals(ReadCustomText(savedFile, path, ReleaseDateTagName),
                             expected.ReleaseDate.Year > 1900 ? expected.ReleaseDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : string.Empty,
                             StringComparison.Ordinal),
                     _ => true
@@ -514,9 +595,79 @@ namespace Archivio.ViewModels
             return file.GetTag(TagLib.TagTypes.Apple, create) as TagLib.Mpeg4.AppleTag;
         }
 
-        private static DateTimeOffset ReadReleaseDate(TagLib.File file)
+        private static bool SupportsCustomArchivioTags(string path)
         {
-            var rawReleaseDate = GetAppleTag(file, create: false)?.GetDashBox(ArchivioTagOwner, ReleaseDateTagName);
+            var extension = Path.GetExtension(path);
+            return extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".m4v", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".mov", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".webm", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ReadCustomText(TagLib.File file, string path, string name)
+        {
+            var extension = Path.GetExtension(path);
+            if (extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".m4v", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".mov", StringComparison.OrdinalIgnoreCase))
+            {
+                return GetAppleTag(file, create: false)?.GetDashBox(ArchivioTagOwner, name) ?? string.Empty;
+            }
+
+            if (extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".webm", StringComparison.OrdinalIgnoreCase))
+            {
+                var tag = file.GetTag(TagTypes.Matroska, create: false) as TagLib.Matroska.Tag;
+                return GetMatroskaCustomText(tag, $"ARCHIVIO_{name.ToUpperInvariant()}");
+            }
+
+            return string.Empty;
+        }
+
+        private static void SetCustomText(TagLib.File file, string path, string name, string value)
+        {
+            var extension = Path.GetExtension(path);
+            if (extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".m4v", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".mov", StringComparison.OrdinalIgnoreCase))
+            {
+                var appleTag = GetAppleTag(file, create: true)
+                    ?? throw new NotSupportedException("Apple タグを作成できません。");
+                appleTag.SetDashBox(ArchivioTagOwner, name, value);
+                return;
+            }
+
+            if (extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".webm", StringComparison.OrdinalIgnoreCase))
+            {
+                var tag = file.GetTag(TagTypes.Matroska, create: true) as TagLib.Matroska.Tag
+                    ?? throw new NotSupportedException("Matroska タグを作成できません。");
+                SetMatroskaCustomText(tag, $"ARCHIVIO_{name.ToUpperInvariant()}", value);
+                return;
+            }
+
+            throw new NotSupportedException("この形式は Archivio 固有タグに対応していません。");
+        }
+
+        private static string GetMatroskaCustomText(TagLib.Matroska.Tag? tag, string key)
+        {
+            if (tag is null)
+            {
+                return string.Empty;
+            }
+
+            return tag.Get(key, null, true)?.FirstOrDefault() ?? string.Empty;
+        }
+
+        private static void SetMatroskaCustomText(TagLib.Matroska.Tag tag, string key, string value)
+        {
+            tag.Set(key, null, string.IsNullOrWhiteSpace(value) ? null : value);
+        }
+
+        private static DateTimeOffset ReadReleaseDate(TagLib.File file, string path)
+        {
+            var rawReleaseDate = ReadCustomText(file, path, ReleaseDateTagName);
             if (DateTime.TryParseExact(rawReleaseDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
             {
                 return new DateTimeOffset(parsedDate.Year, parsedDate.Month, parsedDate.Day, 0, 0, 0, TimeSpan.Zero);

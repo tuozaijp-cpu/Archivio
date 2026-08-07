@@ -79,8 +79,9 @@ namespace Archivio
 
                     SettingsManager.SaveSettings(currentSettings);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    AppLogger.Error("アプリケーション終了時の設定保存に失敗しました", ex);
                 }
             };
         }
