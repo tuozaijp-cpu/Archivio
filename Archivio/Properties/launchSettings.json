@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Archivio (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Archivio (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

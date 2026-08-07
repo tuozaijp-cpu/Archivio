@@ -1,0 +1,50 @@
+# ==========================================
+# Visual Studio / .NET Core / WinUI
+# ==========================================
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+ARM/
+ARM64/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# WinUI 3 Packaging / Appx / Msix
+AppPackages/
+BundleArtifacts/
+PackageLayout/
+_pkginfo.txt
+
+# ==========================================
+# Python / Virtual Environment
+# ==========================================
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ==========================================
+# Installer Output / Executables
+# ==========================================
+Installer_Output/
+*.exe
+*.msi
+
+# ==========================================
+# Other standard ignores
+# ==========================================
+.DS_Store
+Thumbs.db
