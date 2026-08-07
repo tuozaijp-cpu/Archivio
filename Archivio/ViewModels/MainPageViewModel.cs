@@ -812,12 +812,14 @@ namespace Archivio.ViewModels
                             item.CoverArt = list[0];
                             item.SelectedCoverArtIndex = 0;
                             item.HasCoverArt = true;
+                            item.ResetCoverArtChangeTracking();
                         }
                         catch
                         {
                             item.CoverArts = new ObservableCollection<BitmapImage>();
                             item.CoverArt = null;
                             item.HasCoverArt = false;
+                            item.ResetCoverArtChangeTracking();
                         }
                     });
                 }
@@ -828,6 +830,7 @@ namespace Archivio.ViewModels
                         item.CoverArts = new ObservableCollection<BitmapImage>();
                         item.CoverArt = null;
                         item.HasCoverArt = false;
+                        item.ResetCoverArtChangeTracking();
                     });
                 }
             }
@@ -838,6 +841,7 @@ namespace Archivio.ViewModels
                     item.CoverArts = new ObservableCollection<BitmapImage>();
                     item.CoverArt = null;
                     item.HasCoverArt = false;
+                    item.ResetCoverArtChangeTracking();
                 });
             }
             finally
