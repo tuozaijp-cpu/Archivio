@@ -727,9 +727,152 @@ namespace Archivio.ViewModels
             }
         }
 
+        private async Task LoadCoverArtAsync(VideoFileItem item, bool force = false)
+        {
+            await _metadataReadSemaphore.WaitAsync();
+            try
+            {
+                if (!force && item.HasCoverArt)
+                {
+                    return;
+                }
 
+                var imagesData = (await _metadataService.LoadCoverArtImagesAsync(item.File)).ToList();
 
-        public async Task ExportVideosToCsvAsync()
+                if (imagesData.Count > 0)
+                {
+                    await RunOnUIThreadAsync(async () =>
+                    {
+                        try
+                        {
+                            var list = new ObservableCollection<BitmapImage>();
+                            foreach (var coverArt in imagesData)
+                            {
+                                using var stream = new InMemoryRandomAccessStream();
+                                using var writer = new DataWriter(stream.GetOutputStreamAt(0));
+                                writer.WriteBytes(coverArt.Data);
+                                await writer.StoreAsync();
+                                await writer.FlushAsync();
+                                stream.Seek(0);
+
+                                var bitmap = new BitmapImage();
+                                await bitmap.SetSourceAsync(stream);
+                                list.Add(bitmap);
+                            }
+                            item.CoverArtImages = imagesData;
+                            item.CoverArts = list;
+                            item.CoverArt = list[0];
+                            item.SelectedCoverArtIndex = 0;
+                            item.HasCoverArt = true;
+                        }
+                        catch
+                        {
+                            item.CoverArts = new ObservableCollection<BitmapImage>();
+                            item.CoverArt = null;
+                            item.HasCoverArt = false;
+                        }
+                    });
+                }
+                else
+                {
+                    await RunOnUIThreadAsync(() =>
+                    {
+                        item.CoverArts = new ObservableCollection<BitmapImage>();
+                        item.CoverArt = null;
+                        item.HasCoverArt = false;
+                    });
+                }
+            }
+            catch
+            {
+                await RunOnUIThreadAsync(() =>
+                {
+                    item.CoverArts = new ObservableCollection<BitmapImage>();
+                    item.CoverArt = null;
+                    item.HasCoverArt = false;
+                });
+            }
+            finally
+            {
+                _metadataReadSemaphore.Release();
+            }
+        }
+
+        private async Task<VideoMetadataOperationResult> SaveCoverArtAsync(VideoFileItem item)
+        {
+            await _metadataSaveSemaphore.WaitAsync();
+            try
+            {
+                return await _metadataService.SaveCoverArtAsync(item.File, item.CoverArtImages);
+            }
+            catch (Exception ex)
+            {
+                return new VideoMetadataOperationResult
+                {
+                    Succeeded = false,
+                    Message = "カバー画像の保存に失敗しました",
+                    Details = ex.Message
+                };
+            }
+            finally
+            {
+                _metadataSaveSemaphore.Release();
+            }
+        }
+
+        public async Task AddCoverArtImageAsync()
+        {
+            if (SelectedVideo is null) return;
+
+            var picker = new FileOpenPicker();
+            picker.ViewMode = PickerViewMode.Thumbnail;
+            picker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
+            picker.FileTypeFilter.Add(".jpg");
+            picker.FileTypeFilter.Add(".jpeg");
+            picker.FileTypeFilter.Add(".png");
+
+            if (App.MainWindow is not null)
+            {
+                var hwnd = WindowNative.GetWindowHandle(App.MainWindow);
+                InitializeWithWindow.Initialize(picker, hwnd);
+            }
+
+            var file = await picker.PickSingleFileAsync();
+            if (file is null) return;
+
+            try
+            {
+                using var stream = await file.OpenReadAsync();
+                var bytes = new byte[stream.Size];
+                using var reader = new DataReader(stream);
+                await reader.LoadAsync((uint)stream.Size);
+                reader.ReadBytes(bytes);
+
+                // UIスレッド上でBitmapImageの生成とコレクション追加
+                var bitmap = new BitmapImage();
+                stream.Seek(0);
+                await bitmap.SetSourceAsync(stream);
+
+                SelectedVideo.CoverArtImages.Add(new CoverArtImageData
+                {
+                    Data = bytes,
+                    MimeType = file.ContentType ?? "image/jpeg",
+                    Description = file.Name
+                });
+                SelectedVideo.CoverArts.Add(bitmap);
+                SelectedVideo.HasCoverArt = true;
+                SelectedVideo.SelectedCoverArtIndex = SelectedVideo.CoverArts.Count - 1;
+                SelectedVideo.IsCoverArtDirty = true; // Mark as dirty explicitly!
+
+                SelectedVideo.NotifyCoverArtPropertiesChanged();
+                OnPropertyChanged(nameof(HasPendingChanges));
+            }
+            catch
+            {
+            }
+        }
+
+        public async Task ReplaceCoverArtImageAsync()
         {
             if (Videos == null || Videos.Count == 0)
             {
