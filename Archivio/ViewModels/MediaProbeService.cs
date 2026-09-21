@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Windows.Storage;
 
@@ -12,7 +13,7 @@ namespace Archivio.ViewModels
     /// <summary>動画ストリームの技術情報を、利用可能な解析器から取得する。</summary>
     public interface IMediaProbeService
     {
-        Task<MediaProbeResult> ProbeAsync(StorageFile file);
+        Task<MediaProbeResult> ProbeAsync(StorageFile file, CancellationToken cancellationToken = default);
     }
 
     public sealed class MediaProbeResult
@@ -37,11 +38,12 @@ namespace Archivio.ViewModels
     {
         // 0: 未確認、1: 利用可能、-1: 起動不可。FFprobe 非導入環境での失敗プロセス生成を防ぐ。
         private static int _ffprobeAvailability;
+        private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(30);
         // FFprobe 結果のメモリキャッシュ。ファイルパスをキーとして使用
         private static readonly ConcurrentDictionary<string, MediaProbeResult> ProbeResultCache = 
             new(StringComparer.OrdinalIgnoreCase);
 
-        public async Task<MediaProbeResult> ProbeAsync(StorageFile file)
+        public async Task<MediaProbeResult> ProbeAsync(StorageFile file, CancellationToken cancellationToken = default)
         {
             // キャッシュをチェック
             if (ProbeResultCache.TryGetValue(file.Path, out var cachedResult))
@@ -49,25 +51,26 @@ namespace Archivio.ViewModels
                 return cachedResult;
             }
 
-            var ffprobeResult = await TryProbeWithFfprobeAsync(file.Path);
+            var ffprobeResult = await TryProbeWithFfprobeAsync(file.Path, cancellationToken);
             if (ffprobeResult.HasValues)
             {
                 ProbeResultCache.TryAdd(file.Path, ffprobeResult);
                 return ffprobeResult;
             }
 
-            var windowsResult = await ProbeWithWindowsAsync(file);
+            var windowsResult = await ProbeWithWindowsAsync(file, cancellationToken);
             ProbeResultCache.TryAdd(file.Path, windowsResult);
             return windowsResult;
         }
 
-        private static async Task<MediaProbeResult> TryProbeWithFfprobeAsync(string path)
+        private static async Task<MediaProbeResult> TryProbeWithFfprobeAsync(string path, CancellationToken cancellationToken)
         {
             if (System.Threading.Volatile.Read(ref _ffprobeAvailability) < 0)
             {
                 return new MediaProbeResult();
             }
 
+            Process? process = null;
             try
             {
                 var executable = GetFfprobeExecutable();
@@ -86,7 +89,7 @@ namespace Archivio.ViewModels
                 startInfo.ArgumentList.Add("json");
                 startInfo.ArgumentList.Add(path);
 
-                using var process = Process.Start(startInfo);
+                process = Process.Start(startInfo);
                 if (process is null)
                 {
                     return new MediaProbeResult();
@@ -94,7 +97,9 @@ namespace Archivio.ViewModels
 
                 var outputTask = process.StandardOutput.ReadToEndAsync();
                 var errorTask = process.StandardError.ReadToEndAsync();
-                await process.WaitForExitAsync();
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(ProbeTimeout);
+                await process.WaitForExitAsync(timeout.Token);
                 var output = await outputTask;
                 var error = await errorTask;
                 if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
@@ -109,6 +114,15 @@ namespace Archivio.ViewModels
                 System.Threading.Interlocked.Exchange(ref _ffprobeAvailability, 1);
                 return ParseFfprobeJson(output);
             }
+            catch (OperationCanceledException)
+            {
+                if (process is { HasExited: false })
+                {
+                    try { process.Kill(entireProcessTree: true); } catch { }
+                }
+
+                throw;
+            }
             catch (System.ComponentModel.Win32Exception)
             {
                 // FFprobe は任意機能。PATH 上にない環境は Windows API へフォールバックする。
@@ -119,6 +133,10 @@ namespace Archivio.ViewModels
             {
                 AppLogger.Error("FFprobe の実行に失敗しました", ex, path);
                 return new MediaProbeResult();
+            }
+            finally
+            {
+                process?.Dispose();
             }
         }
 
@@ -160,10 +178,11 @@ namespace Archivio.ViewModels
             };
         }
 
-        private static async Task<MediaProbeResult> ProbeWithWindowsAsync(StorageFile file)
+        private static async Task<MediaProbeResult> ProbeWithWindowsAsync(StorageFile file, CancellationToken cancellationToken)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var properties = await file.Properties.GetVideoPropertiesAsync();
                 return new MediaProbeResult
                 {

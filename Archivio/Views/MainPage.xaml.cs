@@ -59,6 +59,7 @@ namespace Archivio.Views
                 ReMuxMenuItem.Text = LanguageManager.GetString("Menu_ReMux");
                 ClearCacheMenuItem.Text = LanguageManager.GetString("Menu_ClearCache");
                 LanguageMenu.Text = LanguageManager.GetString("Menu_Language");
+                ReadmeMenuItem.Text = LanguageManager.GetString("Menu_Readme");
                 AboutMenuItem.Text = LanguageManager.GetString("Menu_About");
 
                 // Details Form Fields Headers
@@ -789,6 +790,22 @@ namespace Archivio.Views
                 FontSize = 13 
             });
 
+            stackPanel.Children.Add(new TextBlock
+            {
+                Text = "Archivioは無料で利用できます。もしArchivioがお役に立ちましたら今後の開発を応援していただけると嬉しいです。",
+                TextWrapping = TextWrapping.WrapWholeWords,
+                FontSize = 13
+            });
+
+            var supportLink = new HyperlinkButton
+            {
+                Content = "https://ofuse.me/8679942e",
+                NavigateUri = new Uri("https://ofuse.me/8679942e"),
+                Padding = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            stackPanel.Children.Add(supportLink);
+
             var linkPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
             linkPanel.Children.Add(new TextBlock { Text = "GitHub:", VerticalAlignment = VerticalAlignment.Center });
             
@@ -812,6 +829,29 @@ namespace Archivio.Views
             };
 
             await dialog.ShowAsync();
+        }
+
+        private async void ReadmeMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var readmePath = Path.Combine(AppContext.BaseDirectory, "README.md");
+
+            try
+            {
+                var readmeFile = await Windows.Storage.StorageFile.GetFileFromPathAsync(readmePath);
+                await Windows.System.Launcher.LaunchFileAsync(readmeFile);
+            }
+            catch (Exception)
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = LanguageManager.GetString("Dialog_Readme_NotFound_Title"),
+                    Content = LanguageManager.GetString("Dialog_Readme_NotFound_Message"),
+                    CloseButtonText = LanguageManager.GetString("Button_Close"),
+                    XamlRoot = this.XamlRoot
+                };
+
+                await dialog.ShowAsync();
+            }
         }
     }
 }

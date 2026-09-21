@@ -1,8 +1,8 @@
 # Archivio
 
-An elegant Windows WinUI 3 desktop application for listing video files, managing Windows property system metadata, and updating cover arts.
+An elegant Windows WinUI 3 desktop application for listing video files, managing embedded video metadata, and updating cover arts.
 
-動画ファイルの一覧表示、Windowsプロパティシステムを介したメタデータの管理、およびカバーアート（表紙画像）の編集を行う、洗練されたWinUI 3デスクトップアプリケーションです。
+動画ファイルの一覧表示、動画ファイル内タグを正本としたメタデータ管理、およびカバーアート（表紙画像）の編集を行うWinUI 3デスクトップアプリケーションです。
 
 ---
 
@@ -15,13 +15,13 @@ An elegant Windows WinUI 3 desktop application for listing video files, managing
 <a name="english"></a>
 # English
 
-Archivio is a high-performance video metadata manager built natively for Windows using WinUI 3 (Windows App SDK) and .NET 10. It reads, displays, and writes video metadata (such as title, actors, release date, and ratings) directly from and to the Windows Property System, allowing seamless integration with Windows Search and File Explorer.
+Archivio is a video metadata manager built natively for Windows using WinUI 3 (Windows App SDK) and .NET 10. It reads Windows properties for display and technical information, while TagLib writes editable metadata directly into the video file. The video file is the source of truth.
 
 ## Features
 * **Dynamic Grid View:** An interactive `DataGrid` listing video files, with support for column resizing, sorting, and user-led column reordering (drag-and-drop) which persists automatically across application restarts.
 * **Three-Column Detail Panel:** 
   * **Left:** Cover art `FlipView` gallery with tools to add, change, delete, and save images.
-  * **Center:** Editable metadata fields (Title, Participants, Release Date, Catalog Number, Rating, Publisher, Label, Category, Comment) saving directly to Windows shell properties.
+  * **Center:** Editable metadata fields (Title, Participants, Release Date, Catalog Number, Rating, Publisher, Label, Category, Comment) saving directly to embedded file tags.
   * **Right:** Read-only technical metadata panel (Duration, Resolution, Frame Rate, Video/Audio Bitrates, Compression formats, etc.).
 * **Dynamic JSON Localization:** Fully localized in English and Japanese. Includes an in-place language switcher inside the DataGrid context menu that re-localizes the entire UI instantly without requiring an app restart.
 * **Persistent Layouts:** Automatically saves and restores window dimensions, grid splitter positions, column widths, and custom column display indices.
@@ -72,13 +72,58 @@ The language will automatically appear in the right-click "Language / 表示言�
 <a name="日本語"></a>
 # 日本語
 
-Archivio（アルキーヴィオ）は、WinUI 3 (Windows App SDK) と .NET 10 を採用した Windows 用の高性能な動画メタデータ管理ツールです。動画ファイルの属性（タイトル、出演者、発売日、評価など）をWindowsのプロパティシステムと直接同期させ、エクスプローラーやWindows検索とシームレスに連動した管理が行えます。
+Archivio（アルキーヴィオ）は、WinUI 3 (Windows App SDK) と .NET 10 を採用した Windows 用の動画メタデータ管理ツールです。
+動画ファイル内のタグ（タイトル、出演者、発売日、評価など）をTagLib経由で直接更新します。動画ファイルを正本とし、Windowsプロパティは参照と技術情報の取得に利用します。
+
+## はじめに
+
+Archivioは、動画ファイルを一覧で確認し、動画に埋め込まれたメタデータやカバーアートを整理するための無料アプリです。
+動画ファイルそのものを管理対象とするため、別のデータベースを用意せずに、ファイルと一緒にメタデータを持ち運べます。
+
+### インストール
+
+1. `Archivio_Setup.exe`を実行します。
+2. 画面の案内に従ってインストールします。
+3. スタートメニューまたはデスクトップのArchivioから起動します。
+
+Archivioの実行には **.NET 10.0 Desktop Runtime（x64）** が必要です。インストールされていない場合は、Microsoftの公式ページから.NET Desktop Runtimeをインストールしてください。
+
+### 基本的な使い方
+
+1. 「フォルダを選択」を押し、動画ファイルが入っているフォルダを選択します。
+2. 必要に応じて「サブフォルダーも検索」を有効にして、下位フォルダーも検索します。
+3. 動画一覧からファイルを選択すると、メタデータ、カバーアート、技術情報が表示されます。
+4. 中央の詳細欄を編集し、「保存」を押すと動画ファイルへ書き込みます。
+5. 一覧の右クリックメニューから、ファイル名の変更、再読み込み、再MUX、READMEの表示などを実行できます。
+
+### 大切な注意事項
+
+メタデータの保存やファイル名の変更を行う前に、必要な動画ファイルのバックアップを作成してください。
+特に、動画形式(mpr,mkv以外)によっては一部のカスタム項目やカバーアートを保存できない場合があります。
+保存後は、対象ファイルを再度読み込んで変更内容を確認してください。
+
+.mp4,.mkvでもメタデータの保存に失敗した場合、FFmpegでの再MUXを試してみてください。
+動画本体の情報はそのままメタデータ領域を再構成して保存可能となる可能性があります。
+
+### FFmpegについて
+
+動画の技術情報をより正確に取得したり、再MUX機能を使用したりするにはFFmpegとFFprobeが必要です。
+FFmpegの`bin`フォルダーを環境変数`PATH`へ追加すると、Archivioから自動的に利用できます。
+未設定の場合も、Windowsが提供する基本的なファイル情報を使って動作します。
+
+### READMEの表示
+
+インストール後は、動画一覧を右クリックして「READMEを表示」を選択すると、この利用案内を既定のMarkdown対応アプリまたは関連付けられたアプリで開けます。
+
+Archivioは無料で利用できます。もしArchivioがお役に立ちましたら、今後の開発を応援していただけると嬉しいです。
+
+応援はこちら: <https://ofuse.me/8679942e>
 
 ## 主な機能
 * **動的グリッドビュー:** 動画ファイル一覧を表示するインタラクティブな `DataGrid`。カラムの並び替え（ドラッグ＆ドロップ）、リサイズ、ソートに対応し、その順序や幅はアプリ再起動後も自動で復元されます。
 * **高密度3カラム詳細パネル:**
   * **左カラム:** カバーアート（表紙）の `FlipView` ギャラリー。画像の追加・変更・削除、タグへの書き込み保存に対応。
-  * **中央カラム:** 編集可能なメタデータ入力（タイトル、出演者、発売日、品番、評価、レーベル、発行元、カテゴリ、コメント）。
+  * **中央カラム:** 動画ファイル内タグへ保存するメタデータ入力（タイトル、出演者、発売日、品番、評価、レーベル、発行元、カテゴリ、コメント）。
   * **右カラム:** 読み取り専用の技術プロパティ表示（再生時間、解像度、フレームレート、映像/音声ビットレート、圧縮形式など）。
 * **動的 JSON ローカライズ:** 日本語と英語に完全対応。右クリックのコンテキストメニューからアプリを再起動することなく、UI表示言語をその場で一瞬で切り替えられます。
 * **レイアウト設定の自動保存:** ウィンドウサイズ、分割バー位置、各カラム幅、カラムの表示順序を終了時に自動保存し、次回起動時に再現します。
@@ -88,7 +133,8 @@ Archivio（アルキーヴィオ）は、WinUI 3 (Windows App SDK) と .NET 10 �
 
 ## FFmpeg & FFprobe の有無に関する処理と統合仕様
 
-Archivioは、動画ファイルの技術分析とコンテナ処理に公式のコマンドラインユーティリティである **FFmpeg** および **FFprobe** を利用します。これらは通常セットで配布されており（公式のFFmpegスタティックビルド等）、FFmpegの `bin` フォルダをシステムの環境変数 `PATH` に登録するだけで、Archivio側のすべての機能が有効化されます。
+Archivioは、動画ファイルの技術分析とコンテナ処理に公式のコマンドラインユーティリティである **FFmpeg** および **FFprobe** を利用します。
+これらは通常セットで配布されており（公式のFFmpegスタティックビルド等）、FFmpegの `bin` フォルダをシステムの環境変数 `PATH` に登録するだけで、Archivio側のすべての機能が有効化されます。
 
 ### 1. FFprobe: 技術仕様メタデータの抽出
 動画ファイルから圧縮コーデック、音声ストリーム形式、高精度なビットレート、解像度などの詳細な技術仕様情報を抽出するために、FFprobeを優先的に使用します。
@@ -121,4 +167,4 @@ Archivioは、外部ファイルを配置するだけで簡単に新しい表示
 1. アプリインストールディレクトリの `Assets/Locale/` フォルダを開きます。
 2. 新しい言語ファイル `[言語コード].json`（例：フランス語なら `fr.json`）を配置します。
 3. JSONファイル内に `\"LanguageName\": \"Français\"` と各キーの翻訳を記述します。
-次回起動時、右クリックの「表示言語 / Language」メニューに新しい言語が自動的に追加され、選択可能になります！
+次回起動時、右クリックの「表示言語 / Language」メニューに新しい言語が自動的に追加され、選択可能になります。

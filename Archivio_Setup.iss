@@ -56,6 +56,8 @@ Type: files; Name: "{app}\mscorrc.dll"
 [Files]
 ; メインのEXEファイル
 Source: "{#ReleasePublishDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; 利用案内をインストール先に同梱（アプリの右クリックメニューから表示）
+Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 ; その他の依存DLLやアセット群（メインEXEは除外して二重コピーを防止）
 Source: "{#ReleasePublishDir}\*"; DestDir: "{app}"; Excludes: "{#AppExeName}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

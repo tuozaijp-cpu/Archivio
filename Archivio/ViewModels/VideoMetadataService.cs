@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.WindowsAPICodePack.Shell;
 using Microsoft.WindowsAPICodePack.Shell.PropertySystem;
@@ -13,7 +14,7 @@ namespace Archivio.ViewModels
 {
     public interface IVideoMetadataService
     {
-        Task<VideoMetadataLoadResult> LoadMetadataAsync(StorageFile file);
+        Task<VideoMetadataLoadResult> LoadMetadataAsync(StorageFile file, CancellationToken cancellationToken = default);
         Task<VideoMetadataOperationResult> SaveMetadataAsync(StorageFile file, VideoMetadataSnapshot metadata, VideoMetadataSnapshot? originalMetadata, IEnumerable<string> changedProperties);
         Task<IReadOnlyList<CoverArtImageData>> LoadCoverArtImagesAsync(StorageFile file);
         Task<VideoMetadataOperationResult> SaveCoverArtAsync(StorageFile file, IEnumerable<CoverArtImageData> coverArtImages);
@@ -22,10 +23,13 @@ namespace Archivio.ViewModels
     public sealed class VideoMetadataOperationResult
     {
         public bool Succeeded { get; init; }
-        /// <summary>正本であるファイル内タグの保存には成功したが、Windows 表示用プロパティの同期で問題があった場合に true。</summary>
+        /// <summary>一部項目だけ保存できなかった場合に true。</summary>
         public bool HasWarnings { get; init; }
         public string Message { get; init; } = string.Empty;
         public string? Details { get; init; }
+        public IReadOnlyList<string> SavedProperties { get; init; } = Array.Empty<string>();
+        public IReadOnlyList<string> FailedProperties { get; init; } = Array.Empty<string>();
+        public IReadOnlyList<string> UnsupportedProperties { get; init; } = Array.Empty<string>();
     }
 
     public sealed class VideoMetadataLoadResult
@@ -58,6 +62,21 @@ namespace Archivio.ViewModels
         public string Comment { get; set; } = string.Empty;
         public string ReleaseDateText { get; set; } = string.Empty;
         public DateTimeOffset ReleaseDate { get; set; } = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        public VideoTechnicalMetadata Technical { get; set; } = new();
+    }
+
+    /// <summary>技術情報の正規化済み内部表現。表示用文字列とは分離する。</summary>
+    public sealed class VideoTechnicalMetadata
+    {
+        public TimeSpan? Duration { get; set; }
+        public int? FrameWidth { get; set; }
+        public int? FrameHeight { get; set; }
+        public double? FrameRate { get; set; }
+        public long? VideoBitrate { get; set; }
+        public string VideoCodec { get; set; } = string.Empty;
+        public int? AudioSampleRate { get; set; }
+        public long? AudioBitrate { get; set; }
+        public string AudioCodec { get; set; } = string.Empty;
     }
 
     public sealed class VideoMetadataService : IVideoMetadataService
@@ -73,10 +92,10 @@ namespace Archivio.ViewModels
             _mediaProbeService = mediaProbeService ?? new MediaProbeService();
         }
 
-        public async Task<VideoMetadataLoadResult> LoadMetadataAsync(StorageFile file)
+        public async Task<VideoMetadataLoadResult> LoadMetadataAsync(StorageFile file, CancellationToken cancellationToken = default)
         {
             // FFprobe が利用できれば最優先する。存在しない・失敗した環境では Windows API の結果になる。
-            var probeResult = await _mediaProbeService.ProbeAsync(file);
+            var probeResult = await _mediaProbeService.ProbeAsync(file, cancellationToken);
             return await Task.Run(() =>
             {
                 var snapshot = new VideoMetadataSnapshot();
@@ -137,37 +156,50 @@ namespace Archivio.ViewModels
                     var frameRate = GetFirstShellPropertyText(properties, new[] { "System.Video.FrameRate", "System.Media.FrameRate" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(frameRate))
                     {
-                        snapshot.FrameRate = ValueOrExisting(snapshot.FrameRate, NormalizeFrameRate(frameRate));
+                        var normalized = NormalizeFrameRate(frameRate);
+                        snapshot.FrameRate = ValueOrExisting(snapshot.FrameRate, normalized);
+                        snapshot.Technical.FrameRate ??= ParseDouble(normalized);
                     }
 
                     var videoBitrate = GetFirstShellPropertyText(properties, new[] { "System.Video.EncodingBitrate", "System.Video.BitRate", "System.Video.Bitrate" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(videoBitrate))
                     {
-                        snapshot.VideoBitrate = ValueOrExisting(snapshot.VideoBitrate, NormalizeBitrate(videoBitrate));
+                        var normalized = NormalizeBitrate(videoBitrate);
+                        snapshot.VideoBitrate = ValueOrExisting(snapshot.VideoBitrate, normalized);
+                        snapshot.Technical.VideoBitrate ??= ParseBitrate(normalized);
                     }
 
                     var videoCompression = GetFirstShellPropertyText(properties, new[] { "System.Video.Compression", "System.Video.CompressionType", "System.Video.Compressor" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(videoCompression))
                     {
                         snapshot.VideoCompression = ValueOrExisting(snapshot.VideoCompression, videoCompression);
+                        snapshot.Technical.VideoCodec = string.IsNullOrWhiteSpace(snapshot.Technical.VideoCodec)
+                            ? videoCompression
+                            : snapshot.Technical.VideoCodec;
                     }
 
                     var audioSampleRate = GetFirstShellPropertyText(properties, new[] { "System.Audio.SampleRate", "System.Audio.SamplingRate" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(audioSampleRate))
                     {
                         snapshot.AudioSampleRate = ValueOrExisting(snapshot.AudioSampleRate, audioSampleRate);
+                        snapshot.Technical.AudioSampleRate ??= ParseInt(audioSampleRate);
                     }
 
                     var audioBitrate = GetFirstShellPropertyText(properties, new[] { "System.Audio.EncodingBitrate", "System.Audio.BitRate", "System.Audio.Bitrate" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(audioBitrate))
                     {
-                        snapshot.AudioBitrate = ValueOrExisting(snapshot.AudioBitrate, NormalizeBitrate(audioBitrate));
+                        var normalized = NormalizeBitrate(audioBitrate);
+                        snapshot.AudioBitrate = ValueOrExisting(snapshot.AudioBitrate, normalized);
+                        snapshot.Technical.AudioBitrate ??= ParseBitrate(normalized);
                     }
 
                     var audioFormat = GetFirstShellPropertyText(properties, new[] { "System.Audio.Format", "System.Audio.EncodingFormat" }, windowsPropertyErrors);
                     if (!string.IsNullOrWhiteSpace(audioFormat))
                     {
                         snapshot.AudioFormat = ValueOrExisting(snapshot.AudioFormat, audioFormat);
+                        snapshot.Technical.AudioCodec = string.IsNullOrWhiteSpace(snapshot.Technical.AudioCodec)
+                            ? audioFormat
+                            : snapshot.Technical.AudioCodec;
                     }
 
                 }
@@ -191,7 +223,7 @@ namespace Archivio.ViewModels
                     TechnicalPropertiesLoaded = probeResult.HasValues || windowsPropertyErrors.Count == 0,
                     WindowsPropertyErrors = windowsPropertyErrors
                 };
-            });
+            }, cancellationToken);
         }
 
         public async Task<VideoMetadataOperationResult> SaveMetadataAsync(StorageFile file, VideoMetadataSnapshot metadata, VideoMetadataSnapshot? originalMetadata, IEnumerable<string> changedProperties)
@@ -247,14 +279,15 @@ namespace Archivio.ViewModels
                     return new VideoMetadataOperationResult { Succeeded = true, Message = "変更なし" };
                 }
 
-                var canonicalErrors = new List<string>();
+                var warningErrors = new List<string>();
+                var fatalErrors = new List<string>();
                 var unsupportedCustomFields = fieldsToPersist
                     .Where(field => field is "Rating" or "ReleaseDate")
                     .Where(field => !SupportsCustomArchivioTags(file.Path))
                     .ToList();
                 if (unsupportedCustomFields.Count > 0)
                 {
-                    canonicalErrors.Add($"{Path.GetExtension(file.Path)} は Archivio 固有項目（{string.Join("、", unsupportedCustomFields)}）の埋め込み保存に対応していません。");
+                    warningErrors.Add($"{Path.GetExtension(file.Path)} は Archivio 固有項目（{string.Join("、", unsupportedCustomFields)}）の埋め込み保存に対応していません。");
                     fieldsToPersist = fieldsToPersist.Except(unsupportedCustomFields, StringComparer.OrdinalIgnoreCase).ToList();
                 }
 
@@ -349,17 +382,17 @@ namespace Archivio.ViewModels
                     }
                     else
                     {
-                        canonicalErrors.Add("ファイル内タグが利用できないため保存できません。");
+                        fatalErrors.Add("ファイル内タグが利用できないため保存できません。");
                     }
                 }
                 catch (Exception ex)
                 {
                     AppLogger.Error("ファイル内タグの保存に失敗しました", ex, file.Path);
-                    canonicalErrors.Add($"ファイル内タグの保存に失敗しました: {ex.Message}");
+                    fatalErrors.Add($"ファイル内タグの保存に失敗しました: {ex.Message}");
                 }
 
                 // 非対応の独自項目があっても、対応する標準項目の保存結果は検証する。
-                if (fieldsToPersist.Count > 0 && canonicalErrors.All(error => !error.StartsWith("ファイル内タグ")))
+                if (fieldsToPersist.Count > 0 && fatalErrors.Count == 0)
                 {
                     try
                     {
@@ -367,15 +400,22 @@ namespace Archivio.ViewModels
                     }
                     catch (Exception ex)
                     {
-                        canonicalErrors.Add($"ファイル内タグの保存内容を確認できませんでした: {ex.Message}");
+                        fatalErrors.Add($"ファイル内タグの保存内容を確認できませんでした: {ex.Message}");
                     }
                 }
 
+                var succeeded = fatalErrors.Count == 0;
+                var errors = warningErrors.Concat(fatalErrors).ToList();
+
                 return new VideoMetadataOperationResult
                 {
-                    Succeeded = canonicalErrors.Count == 0,
-                    Message = canonicalErrors.Count > 0 ? "ファイル内タグの保存に失敗しました" : "保存しました",
-                    Details = canonicalErrors.Count == 0 ? null : string.Join(Environment.NewLine, canonicalErrors)
+                    Succeeded = succeeded,
+                    HasWarnings = succeeded && warningErrors.Count > 0,
+                    Message = succeeded ? (warningErrors.Count > 0 ? "一部の項目を保存しました" : "保存しました") : "ファイル内タグの保存に失敗しました",
+                    Details = errors.Count == 0 ? null : string.Join(Environment.NewLine, errors),
+                    SavedProperties = succeeded ? fieldsToPersist : Array.Empty<string>(),
+                    FailedProperties = succeeded ? Array.Empty<string>() : fieldsToPersist,
+                    UnsupportedProperties = unsupportedCustomFields
                 };
             });
         }
@@ -460,6 +500,7 @@ namespace Archivio.ViewModels
             if (properties.Duration > TimeSpan.Zero)
             {
                 snapshot.Duration = FormatDuration(properties.Duration);
+                snapshot.Technical.Duration = properties.Duration;
             }
 
             snapshot.FrameWidth = GetNumericStringProperty(properties, "VideoWidth");
@@ -469,6 +510,13 @@ namespace Archivio.ViewModels
             snapshot.AudioSampleRate = GetNumericStringProperty(properties, "AudioSampleRate");
             snapshot.AudioBitrate = GetNumericStringProperty(properties, "AudioBitrate");
             snapshot.AudioFormat = GetStringProperty(properties, "AudioFormat");
+            snapshot.Technical.FrameWidth = ParseInt(snapshot.FrameWidth);
+            snapshot.Technical.FrameHeight = ParseInt(snapshot.FrameHeight);
+            snapshot.Technical.FrameRate = ParseDouble(snapshot.FrameRate);
+            snapshot.Technical.VideoBitrate = ParseBitrate(snapshot.VideoBitrate);
+            snapshot.Technical.AudioSampleRate = ParseInt(snapshot.AudioSampleRate);
+            snapshot.Technical.AudioBitrate = ParseBitrate(snapshot.AudioBitrate);
+            snapshot.Technical.AudioCodec = snapshot.AudioFormat;
         }
 
         private static void ApplyMediaProbeResult(VideoMetadataSnapshot snapshot, MediaProbeResult result)
@@ -478,15 +526,59 @@ namespace Archivio.ViewModels
                 return;
             }
 
-            if (result.Duration is { } duration) snapshot.Duration = ValueOrExisting(snapshot.Duration, FormatDuration(duration));
-            if (result.FrameWidth is { } width) snapshot.FrameWidth = ValueOrExisting(snapshot.FrameWidth, width.ToString(CultureInfo.InvariantCulture));
-            if (result.FrameHeight is { } height) snapshot.FrameHeight = ValueOrExisting(snapshot.FrameHeight, height.ToString(CultureInfo.InvariantCulture));
-            if (result.FrameRate is { } frameRate) snapshot.FrameRate = ValueOrExisting(snapshot.FrameRate, frameRate.ToString("0.###", CultureInfo.InvariantCulture));
-            if (result.VideoBitrate is { } videoBitrate) snapshot.VideoBitrate = ValueOrExisting(snapshot.VideoBitrate, FormatBitrate(videoBitrate));
+            if (result.Duration is { } duration)
+            {
+                snapshot.Duration = ValueOrExisting(snapshot.Duration, FormatDuration(duration));
+                snapshot.Technical.Duration ??= duration;
+            }
+
+            if (result.FrameWidth is { } width)
+            {
+                snapshot.FrameWidth = ValueOrExisting(snapshot.FrameWidth, width.ToString(CultureInfo.InvariantCulture));
+                snapshot.Technical.FrameWidth ??= width;
+            }
+
+            if (result.FrameHeight is { } height)
+            {
+                snapshot.FrameHeight = ValueOrExisting(snapshot.FrameHeight, height.ToString(CultureInfo.InvariantCulture));
+                snapshot.Technical.FrameHeight ??= height;
+            }
+
+            if (result.FrameRate is { } frameRate)
+            {
+                snapshot.FrameRate = ValueOrExisting(snapshot.FrameRate, frameRate.ToString("0.###", CultureInfo.InvariantCulture));
+                snapshot.Technical.FrameRate ??= frameRate;
+            }
+
+            if (result.VideoBitrate is { } videoBitrate)
+            {
+                snapshot.VideoBitrate = ValueOrExisting(snapshot.VideoBitrate, FormatBitrate(videoBitrate));
+                snapshot.Technical.VideoBitrate ??= videoBitrate;
+            }
+
             snapshot.VideoCompression = ValueOrExisting(snapshot.VideoCompression, result.VideoCodec);
-            if (result.AudioSampleRate is { } sampleRate) snapshot.AudioSampleRate = ValueOrExisting(snapshot.AudioSampleRate, $"{sampleRate} Hz");
-            if (result.AudioBitrate is { } audioBitrate) snapshot.AudioBitrate = ValueOrExisting(snapshot.AudioBitrate, FormatBitrate(audioBitrate));
+            if (string.IsNullOrWhiteSpace(snapshot.Technical.VideoCodec))
+            {
+                snapshot.Technical.VideoCodec = result.VideoCodec;
+            }
+
+            if (result.AudioSampleRate is { } sampleRate)
+            {
+                snapshot.AudioSampleRate = ValueOrExisting(snapshot.AudioSampleRate, $"{sampleRate} Hz");
+                snapshot.Technical.AudioSampleRate ??= sampleRate;
+            }
+
+            if (result.AudioBitrate is { } audioBitrate)
+            {
+                snapshot.AudioBitrate = ValueOrExisting(snapshot.AudioBitrate, FormatBitrate(audioBitrate));
+                snapshot.Technical.AudioBitrate ??= audioBitrate;
+            }
+
             snapshot.AudioFormat = ValueOrExisting(snapshot.AudioFormat, result.AudioCodec);
+            if (string.IsNullOrWhiteSpace(snapshot.Technical.AudioCodec))
+            {
+                snapshot.Technical.AudioCodec = result.AudioCodec;
+            }
         }
 
         private static string ValueOrExisting(string destination, string? value)
@@ -756,9 +848,9 @@ namespace Archivio.ViewModels
         private static string NormalizeFrameRate(string value)
         {
             var trimmed = value.Trim();
-            if (double.TryParse(trimmed.Replace("fps", string.Empty, StringComparison.OrdinalIgnoreCase), out var fps))
+            if (double.TryParse(trimmed.Replace("fps", string.Empty, StringComparison.OrdinalIgnoreCase), NumberStyles.Float, CultureInfo.InvariantCulture, out var fps))
             {
-                return fps.ToString("0.##");
+                return fps.ToString("0.##", CultureInfo.InvariantCulture);
             }
 
             return trimmed;
@@ -767,17 +859,53 @@ namespace Archivio.ViewModels
         private static string NormalizeBitrate(string value)
         {
             var trimmed = value.Trim();
-            if (int.TryParse(trimmed.Replace("kbps", string.Empty, StringComparison.OrdinalIgnoreCase), out var kbps))
+            if (int.TryParse(trimmed.Replace("kbps", string.Empty, StringComparison.OrdinalIgnoreCase), NumberStyles.Integer, CultureInfo.InvariantCulture, out var kbps))
             {
                 return $"{kbps} kbps";
             }
 
-            if (double.TryParse(trimmed.Replace("kbps", string.Empty, StringComparison.OrdinalIgnoreCase), out var bitrate))
+            if (double.TryParse(trimmed.Replace("kbps", string.Empty, StringComparison.OrdinalIgnoreCase), NumberStyles.Float, CultureInfo.InvariantCulture, out var bitrate))
             {
-                return $"{bitrate:0.##} kbps";
+                return $"{bitrate.ToString("0.##", CultureInfo.InvariantCulture)} kbps";
             }
 
             return trimmed;
+        }
+
+        private static int? ParseInt(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+
+            var digits = new string(value.Where(char.IsDigit).ToArray());
+            return int.TryParse(digits, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result) && result > 0
+                ? result
+                : null;
+        }
+
+        private static double? ParseDouble(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+
+            var normalized = value.Replace("fps", string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
+            return double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) && result > 0
+                ? result
+                : null;
+        }
+
+        private static long? ParseBitrate(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+
+            var hasKbps = value.Contains("kbps", StringComparison.OrdinalIgnoreCase);
+            var normalized = value.Replace("kbps", string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
+            if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) || result <= 0)
+            {
+                return null;
+            }
+
+            return hasKbps
+                ? (long)(result * 1000)
+                : (long)result;
         }
 
         public static string DecodeVideoSubtypeGuid(string guidStr)

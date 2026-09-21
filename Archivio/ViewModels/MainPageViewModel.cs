@@ -344,27 +344,12 @@ namespace Archivio.ViewModels
                                         _metadataCache[file.Path] = cachedEntry.Metadata;
                                         _lastWriteTimeCache[file.Path] = cachedEntry.LastWriteTime;
 
-                                        // キャッシュされたメタデータを item に直接適用
+                                        // キャッシュされたメタデータも、ファイルから再取得した場合と
+                                        // 同じ表示用の適用処理を通す。ここで直接設定すると、例えば
+                                        // AAC(Advanced Audio Codec) が AAC のように正規化されず、
+                                        // ファイル選択時に一覧の表示が変わってしまう。
                                         var metadata = cachedEntry.Metadata;
-                                        item.Title = metadata.Title;
-                                        item.Participants = metadata.Participants;
-                                        item.CatalogNumber = metadata.CatalogNumber;
-                                        item.Category = metadata.Category;
-                                        item.Rating = metadata.Rating;
-                                        item.ContentDistributor = metadata.ContentDistributor;
-                                        item.Publisher = metadata.Publisher;
-                                        item.Duration = metadata.Duration;
-                                        item.FrameWidth = metadata.FrameWidth;
-                                        item.FrameHeight = metadata.FrameHeight;
-                                        item.FrameRate = metadata.FrameRate;
-                                        item.VideoBitrate = metadata.VideoBitrate;
-                                        item.VideoCompression = metadata.VideoCompression;
-                                        item.AudioSampleRate = metadata.AudioSampleRate;
-                                        item.AudioBitrate = metadata.AudioBitrate;
-                                        item.AudioFormat = metadata.AudioFormat;
-                                        item.Comment = metadata.Comment;
-                                        item.ReleaseDateText = metadata.ReleaseDateText;
-                                        item.ReleaseDate = metadata.ReleaseDate;
+                                        ApplyMetadataToItem(item, metadata);
                                         item.IsLoaded = true;
                                     }
                                 }
@@ -744,7 +729,7 @@ namespace Archivio.ViewModels
 
                     try
                     {
-                        var loaded = await LoadWindowsPropertiesAsync(item);
+                        var loaded = await LoadWindowsPropertiesAsync(item, cancellationToken: ct);
 
                         if (!loaded || Videos != items)
                         {
@@ -919,7 +904,7 @@ namespace Archivio.ViewModels
             }
         }
 
-        private async Task<bool> LoadWindowsPropertiesAsync(VideoFileItem item, bool force = false)
+        private async Task<bool> LoadWindowsPropertiesAsync(VideoFileItem item, bool force = false, CancellationToken cancellationToken = default)
         {
             await _metadataReadSemaphore.WaitAsync();
             try
@@ -938,7 +923,7 @@ namespace Archivio.ViewModels
                 VideoMetadataLoadResult? loadResult = null;
                 for (var attempt = 1; attempt <= 3; attempt++)
                 {
-                    loadResult = await _metadataService.LoadMetadataAsync(item.File);
+                    loadResult = await _metadataService.LoadMetadataAsync(item.File, cancellationToken);
                     if (loadResult.TechnicalPropertiesLoaded || loadResult.WindowsPropertiesLoaded || attempt == 3)
                     {
                         break;
@@ -981,28 +966,37 @@ namespace Archivio.ViewModels
         {
             await DispatcherHelper.RunOnUIThreadAsync(() =>
             {
-                item.Title = meta.Title;
-                item.Participants = meta.Participants;
-                item.CatalogNumber = meta.CatalogNumber;
-                item.Category = meta.Category;
-                item.Rating = meta.Rating;
-                item.ContentDistributor = meta.ContentDistributor;
-                item.Publisher = meta.Publisher;
-                item.Duration = meta.Duration;
-                item.FrameWidth = meta.FrameWidth;
-                item.FrameHeight = meta.FrameHeight;
-                item.FrameRate = meta.FrameRate;
-                item.VideoBitrate = meta.VideoBitrate;
-                item.VideoCompression = VideoMetadataService.MapVideoCompression(meta.VideoCompression);
-                item.AudioSampleRate = meta.AudioSampleRate;
-                item.AudioBitrate = meta.AudioBitrate;
-                item.AudioFormat = VideoMetadataService.MapAudioFormat(meta.AudioFormat);
-                item.Comment = meta.Comment;
-                item.ReleaseDate = meta.ReleaseDate;
-                item.ReleaseDateText = DisplayFormatHelper.FormatReleaseDateDisplayText(meta.ReleaseDate);
-
-                item.ResetChangeTracking();
+                ApplyMetadataToItem(item, meta);
             });
+        }
+
+        /// <summary>
+        /// メタデータを表示用に変換して VideoFileItem に適用する共通処理。
+        /// 一覧の初回読み込み、キャッシュ復元、選択時の再読み込みで同じ結果にする。
+        /// </summary>
+        private static void ApplyMetadataToItem(VideoFileItem item, VideoMetadataSnapshot meta)
+        {
+            item.Title = meta.Title;
+            item.Participants = meta.Participants;
+            item.CatalogNumber = meta.CatalogNumber;
+            item.Category = meta.Category;
+            item.Rating = meta.Rating;
+            item.ContentDistributor = meta.ContentDistributor;
+            item.Publisher = meta.Publisher;
+            item.Duration = meta.Duration;
+            item.FrameWidth = meta.FrameWidth;
+            item.FrameHeight = meta.FrameHeight;
+            item.FrameRate = meta.FrameRate;
+            item.VideoBitrate = meta.VideoBitrate;
+            item.VideoCompression = VideoMetadataService.MapVideoCompression(meta.VideoCompression);
+            item.AudioSampleRate = meta.AudioSampleRate;
+            item.AudioBitrate = meta.AudioBitrate;
+            item.AudioFormat = VideoMetadataService.MapAudioFormat(meta.AudioFormat);
+            item.Comment = meta.Comment;
+            item.ReleaseDate = meta.ReleaseDate;
+            item.ReleaseDateText = DisplayFormatHelper.FormatReleaseDateDisplayText(meta.ReleaseDate);
+
+            item.ResetChangeTracking();
         }
 
         private async Task<VideoMetadataOperationResult> SaveWindowsPropertiesAsync(VideoFileItem item)

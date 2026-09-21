@@ -152,6 +152,7 @@
                             <MenuFlyoutItem x:Name="ClearCacheMenuItem" Text="キャッシュをクリア" Click="ClearCacheMenuItem_Click" />
                             <MenuFlyoutSubItem x:Name="LanguageMenu" Text="表示言語 / Language" />
                             <MenuFlyoutSeparator />
+                            <MenuFlyoutItem x:Name="ReadmeMenuItem" Text="READMEを表示" Click="ReadmeMenuItem_Click" />
                             <MenuFlyoutItem x:Name="AboutMenuItem" Text="Archivioについて" Click="AboutMenuItem_Click" />
                         </MenuFlyout>
                     </controls:DataGrid.ContextFlyout>
