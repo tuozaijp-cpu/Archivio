@@ -16,7 +16,10 @@ namespace Archivio.ViewModels
         public double DetailsRowHeight { get; set; } = -1;
         public double CoverArtColumnWidth { get; set; } = -1;
         public double PropertiesColumnWidth { get; set; } = -1;
+        public double TechnicalColumnWidth { get; set; } = -1;
         public Dictionary<string, double> ColumnWidths { get; set; } = new();
+        public List<string> ColumnOrder { get; set; } = new();
+        public string Language { get; set; } = string.Empty;
         public bool IncludeSubfolders { get; set; } = true;
         /// <summary>任意の FFprobe 実行ファイル。空欄の場合は PATH 上の ffprobe を試す。</summary>
         public string FfprobePath { get; set; } = string.Empty;
@@ -27,6 +30,8 @@ namespace Archivio.ViewModels
     /// </summary>
     public static class SettingsManager
     {
+        private static readonly object FileLock = new();
+
         private static readonly string SettingsFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Archivio"
@@ -35,37 +40,43 @@ namespace Archivio.ViewModels
 
         public static AppSettings LoadSettings()
         {
-            try
+            lock (FileLock)
             {
-                if (File.Exists(SettingsFile))
+                try
                 {
-                    var json = File.ReadAllText(SettingsFile);
-                    var settings = JsonSerializer.Deserialize<AppSettings>(json);
-                    if (settings != null)
+                    if (File.Exists(SettingsFile))
                     {
-                        return settings;
+                        var json = File.ReadAllText(SettingsFile);
+                        var settings = JsonSerializer.Deserialize<AppSettings>(json);
+                        if (settings != null)
+                        {
+                            return settings;
+                        }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error("設定ファイルの読み込みに失敗しました", ex, SettingsFile);
-            }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("設定ファイルの読み込みに失敗しました", ex, SettingsFile);
+                }
 
-            return new AppSettings();
+                return new AppSettings();
+            }
         }
 
         public static void SaveSettings(AppSettings settings)
         {
-            try
+            lock (FileLock)
             {
-                Directory.CreateDirectory(SettingsFolder);
-                var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(SettingsFile, json);
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error("設定ファイルの保存に失敗しました", ex, SettingsFile);
+                try
+                {
+                    Directory.CreateDirectory(SettingsFolder);
+                    var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+                    File.WriteAllText(SettingsFile, json);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("設定ファイルの保存に失敗しました", ex, SettingsFile);
+                }
             }
         }
     }

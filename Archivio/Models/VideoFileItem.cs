@@ -40,6 +40,7 @@ namespace Archivio.Models
         private bool _hasCoverArt;
         private bool _isApplyingInitialValues;
         private bool _isLoaded;
+        private bool _isCoverArtLoaded;
         private bool _isSaving;
         private bool _saveFailed;
         private bool _isCoverArtDirty;
@@ -138,6 +139,12 @@ namespace Archivio.Models
         {
             get => _isLoaded;
             set => SetProperty(ref _isLoaded, value);
+        }
+
+        public bool IsCoverArtLoaded
+        {
+            get => _isCoverArtLoaded;
+            set => SetProperty(ref _isCoverArtLoaded, value);
         }
 
         public string Title
@@ -485,9 +492,9 @@ namespace Archivio.Models
         {
             get
             {
-                if (IsDeleted) return "削除";
-                if (IsSaving) return "保存中...";
-                if (SaveFailed) return "失敗";
+                if (IsDeleted) return LanguageManager.GetString("Status_Deleted");
+                if (IsSaving) return LanguageManager.GetString("Status_Saving");
+                if (SaveFailed) return LanguageManager.GetString("Status_Failed");
                 return string.Empty;
             }
         }
@@ -615,6 +622,85 @@ namespace Archivio.Models
             }
 
             return hash;
+        }
+
+        public void UpdateOriginalValuesFromSnapshot(VideoMetadataSnapshot snapshot)
+        {
+            if (snapshot == null) return;
+
+            _isApplyingInitialValues = true;
+            try
+            {
+                _originalValues[nameof(Title)] = snapshot.Title ?? string.Empty;
+                _originalValues[nameof(Participants)] = snapshot.Participants ?? string.Empty;
+                _originalValues[nameof(Category)] = snapshot.Category ?? string.Empty;
+                _originalValues[nameof(Comment)] = snapshot.Comment ?? string.Empty;
+                _originalValues[nameof(CatalogNumber)] = snapshot.CatalogNumber ?? string.Empty;
+                _originalValues[nameof(Rating)] = snapshot.Rating ?? string.Empty;
+                _originalValues[nameof(ContentDistributor)] = snapshot.ContentDistributor ?? string.Empty;
+                _originalValues[nameof(Publisher)] = snapshot.Publisher ?? string.Empty;
+                _originalValues[nameof(ReleaseDate)] = snapshot.ReleaseDate.ToString("yyyy-MM-dd");
+                HasPendingChangesNotify();
+            }
+            finally
+            {
+                _isApplyingInitialValues = false;
+            }
+        }
+
+        public bool HasMetadataChangesComparedTo(VideoMetadataSnapshot snapshot)
+        {
+            if (snapshot == null) return true;
+
+            bool titleChanged = !string.Equals((_title ?? string.Empty).Trim(), (snapshot.Title ?? string.Empty).Trim(), StringComparison.Ordinal);
+            
+            bool participantsChanged = !ArePerformersEqual(_participants, snapshot.Participants);
+            
+            bool commentChanged = !string.Equals((_comment ?? string.Empty).Trim(), (snapshot.Comment ?? string.Empty).Trim(), StringComparison.Ordinal);
+            bool categoryChanged = !AreCategoriesEqual(_category, snapshot.Category);
+            bool catalogNumberChanged = !string.Equals((_catalogNumber ?? string.Empty).Trim(), (snapshot.CatalogNumber ?? string.Empty).Trim(), StringComparison.Ordinal);
+            
+            bool ratingChanged = !string.Equals((_rating ?? string.Empty).Trim(), (snapshot.Rating ?? string.Empty).Trim(), StringComparison.Ordinal);
+            
+            bool contentDistributorChanged = !string.Equals((_contentDistributor ?? string.Empty).Trim(), (snapshot.ContentDistributor ?? string.Empty).Trim(), StringComparison.Ordinal);
+            bool publisherChanged = !string.Equals((_publisher ?? string.Empty).Trim(), (snapshot.Publisher ?? string.Empty).Trim(), StringComparison.Ordinal);
+            
+            bool releaseDateChanged = HasReleaseDateChanged(_releaseDate, snapshot.ReleaseDate);
+
+            return titleChanged || participantsChanged || commentChanged || categoryChanged || catalogNumberChanged || ratingChanged || contentDistributorChanged || publisherChanged || releaseDateChanged;
+        }
+
+        private static bool ArePerformersEqual(string? p1, string? p2)
+        {
+            var arr1 = SplitValues(p1);
+            var arr2 = SplitValues(p2);
+            return arr1.SequenceEqual(arr2, StringComparer.Ordinal);
+        }
+
+        private static bool AreCategoriesEqual(string? c1, string? c2)
+        {
+            var arr1 = SplitValues(c1);
+            var arr2 = SplitValues(c2);
+            return arr1.SequenceEqual(arr2, StringComparer.Ordinal);
+        }
+
+        private static string[] SplitValues(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return Array.Empty<string>();
+            return value.Split(new[] { ';', ',', '，', '；' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(p => p.Trim())
+                        .Where(p => !string.IsNullOrEmpty(p))
+                        .ToArray();
+        }
+
+        private static bool HasReleaseDateChanged(DateTimeOffset currentValue, DateTimeOffset? originalValue)
+        {
+            if (originalValue is null)
+            {
+                return currentValue.Year > 1900;
+            }
+
+            return currentValue.Date != originalValue.Value.Date;
         }
 
         private void UpdateChangeState(string propertyName, string value)

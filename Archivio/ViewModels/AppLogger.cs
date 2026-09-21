@@ -16,7 +16,8 @@ namespace Archivio.ViewModels
         {
             try
             {
-                var target = string.IsNullOrWhiteSpace(targetPath) ? string.Empty : $"{Environment.NewLine}対象: {targetPath}";
+                var targetLabel = LanguageManager.GetString("Log_Target");
+                var target = string.IsNullOrWhiteSpace(targetPath) ? string.Empty : $"{Environment.NewLine}{targetLabel}{targetPath}";
                 var entry = $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}] {operation}{target}{Environment.NewLine}{exception}{Environment.NewLine}";
                 lock (SyncRoot)
                 {

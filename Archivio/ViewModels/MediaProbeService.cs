@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
@@ -36,16 +37,28 @@ namespace Archivio.ViewModels
     {
         // 0: 未確認、1: 利用可能、-1: 起動不可。FFprobe 非導入環境での失敗プロセス生成を防ぐ。
         private static int _ffprobeAvailability;
+        // FFprobe 結果のメモリキャッシュ。ファイルパスをキーとして使用
+        private static readonly ConcurrentDictionary<string, MediaProbeResult> ProbeResultCache = 
+            new(StringComparer.OrdinalIgnoreCase);
 
         public async Task<MediaProbeResult> ProbeAsync(StorageFile file)
         {
+            // キャッシュをチェック
+            if (ProbeResultCache.TryGetValue(file.Path, out var cachedResult))
+            {
+                return cachedResult;
+            }
+
             var ffprobeResult = await TryProbeWithFfprobeAsync(file.Path);
             if (ffprobeResult.HasValues)
             {
+                ProbeResultCache.TryAdd(file.Path, ffprobeResult);
                 return ffprobeResult;
             }
 
-            return await ProbeWithWindowsAsync(file);
+            var windowsResult = await ProbeWithWindowsAsync(file);
+            ProbeResultCache.TryAdd(file.Path, windowsResult);
+            return windowsResult;
         }
 
         private static async Task<MediaProbeResult> TryProbeWithFfprobeAsync(string path)
@@ -220,6 +233,12 @@ namespace Archivio.ViewModels
             }
 
             return null;
+        }
+
+        /// <summary>FFprobe 結果のメモリキャッシュをクリアする。フォルダ切り替え時に呼ぶ。</summary>
+        public static void ClearCache()
+        {
+            ProbeResultCache.Clear();
         }
     }
 }

@@ -17,6 +17,7 @@ using WinRT.Interop;
 namespace Archivio.ViewModels
 {
     /// <summary>
+    /// <summary>
     /// 動画詳細ペイン（メタデータ編集・保存、カバーアート操作）の状態と操作を管理する ViewModel。
     /// </summary>
     public sealed class VideoDetailsViewModel : ViewModelBase
@@ -27,6 +28,8 @@ namespace Archivio.ViewModels
         private readonly Action<bool> _setBusy;
         private readonly Action<string, Exception?, string?> _setError;
         private readonly Action<string> _setSuccess;
+        private readonly Func<string> _getRootFolderPath;
+        private readonly Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? _onMetadataUpdated;
 
         private VideoFileItem? _selectedVideo;
         private CancellationTokenSource? _loadingCts;
@@ -37,7 +40,9 @@ namespace Archivio.ViewModels
             SemaphoreSlim metadataSaveSemaphore,
             Action<bool> setBusy,
             Action<string, Exception?, string?> setError,
-            Action<string> setSuccess)
+            Action<string> setSuccess,
+            Func<string> getRootFolderPath,
+            Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? onMetadataUpdated = null)
         {
             _metadataService = metadataService ?? throw new ArgumentNullException(nameof(metadataService));
             _metadataReadSemaphore = metadataReadSemaphore ?? throw new ArgumentNullException(nameof(metadataReadSemaphore));
@@ -45,6 +50,8 @@ namespace Archivio.ViewModels
             _setBusy = setBusy ?? throw new ArgumentNullException(nameof(setBusy));
             _setError = setError ?? throw new ArgumentNullException(nameof(setError));
             _setSuccess = setSuccess ?? throw new ArgumentNullException(nameof(setSuccess));
+            _getRootFolderPath = getRootFolderPath ?? throw new ArgumentNullException(nameof(getRootFolderPath));
+            _onMetadataUpdated = onMetadataUpdated;
         }
 
         public VideoFileItem? SelectedVideo
@@ -90,7 +97,7 @@ namespace Archivio.ViewModels
                 return;
             }
 
-            if (item.IsLoaded && (item.CoverArtImages.Count > 0 || item.HasCoverArt))
+            if (item.IsCoverArtLoaded && (item.CoverArtImages.Count > 0 || item.HasCoverArt))
             {
                 OnPropertyChanged(nameof(HasPendingChanges));
                 return;
@@ -108,7 +115,7 @@ namespace Archivio.ViewModels
                 {
                     await DispatcherHelper.RunOnUIThreadAsync(() =>
                     {
-                        item.IsLoaded = true;
+                        item.IsCoverArtLoaded = true;
                         OnPropertyChanged(nameof(HasPendingChanges));
                     });
                 }
@@ -229,6 +236,38 @@ namespace Archivio.ViewModels
             _setError(string.Empty, null, null); // Clear message
             try
             {
+                // キャッシュに頼らず、再度ファイルから直接メタデータを読み込む
+                var loadResult = await _metadataService.LoadMetadataAsync(targetVideo.File);
+                if (loadResult != null && loadResult.Metadata != null)
+                {
+                    var freshMeta = loadResult.Metadata;
+
+                    // 登録しようとしている情報（現在のUI値）と再度読み込んだ情報を比較する
+                    bool hasActualChanges = targetVideo.HasMetadataChangesComparedTo(freshMeta);
+
+                    if (!hasActualChanges)
+                    {
+                        await DispatcherHelper.RunOnUIThreadAsync(() =>
+                        {
+                            targetVideo.SaveFailed = false;
+                            
+                            // _originalValuesをファイルから読み込んだ最新値に更新することで変更トラッキングをリセットする
+                            targetVideo.UpdateOriginalValuesFromSnapshot(freshMeta);
+                            
+                            _setSuccess("変更なし");
+                            OnPropertyChanged(nameof(HasPendingChanges));
+                        });
+                        return;
+                    }
+
+                    // 変更がある場合、最新のファイル内メタデータを元の値として設定してから保存処理を実行する。
+                    // これにより、保存処理が最新のディスク情報に基づいて差分を正確に書き込める。
+                    await DispatcherHelper.RunOnUIThreadAsync(() =>
+                    {
+                        targetVideo.UpdateOriginalValuesFromSnapshot(freshMeta);
+                    });
+                }
+
                 var result = await SaveWindowsPropertiesAsync(targetVideo);
 
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
@@ -237,6 +276,7 @@ namespace Archivio.ViewModels
                     if (result.Succeeded)
                     {
                         _setSuccess(DisplayFormatHelper.FormatOperationMessage(result));
+                        targetVideo.ResetMetadataChangeTracking();
                     }
                     else
                     {
@@ -335,7 +375,27 @@ namespace Archivio.ViewModels
                 var metadata = item.CreateCurrentMetadataSnapshot();
                 var originalMetadata = item.CreateOriginalMetadataSnapshot();
 
-                return await _metadataService.SaveMetadataAsync(item.File, metadata, originalMetadata, changedProperties);
+                var result = await _metadataService.SaveMetadataAsync(item.File, metadata, originalMetadata, changedProperties);
+                if (result.Succeeded)
+                {
+                    try
+                    {
+                        var rootFolder = _getRootFolderPath();
+                        if (!string.IsNullOrWhiteSpace(rootFolder))
+                        {
+                            var fileInfo = new System.IO.FileInfo(item.File.Path);
+                            var fileSize = (ulong)fileInfo.Length;
+                            var lastWriteTime = fileInfo.LastWriteTimeUtc;
+                            await MetadataCacheManager.UpdateEntryAsync(rootFolder, item.File.Path, lastWriteTime, fileSize, metadata);
+                            _onMetadataUpdated?.Invoke(item.File.Path, fileSize, lastWriteTime, metadata);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Error("メタデータ保存後のキャッシュ更新に失敗しました", ex, item.File.Path);
+                    }
+                }
+                return result;
             }
             catch (Exception ex)
             {

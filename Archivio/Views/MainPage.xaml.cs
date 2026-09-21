@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using Archivio.Models;
 using Archivio.ViewModels;
 using Microsoft.UI.Xaml;
@@ -23,6 +25,148 @@ namespace Archivio.Views
             DataContext = new MainPageViewModel();
             ReleaseDatePicker.MinYear = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
             RestoreLayoutSettings();
+            ApplyLocalization();
+            InitializeLanguageMenu();
+        }
+
+        private void ApplyLocalization()
+        {
+            try
+            {
+                // Headers and TextBlocks
+                VideoListHeader.Text = LanguageManager.GetString("VideoList_Title");
+                DetailsHeader.Text = LanguageManager.GetString("VideoDetails_Title");
+                NoCoverArtText.Text = LanguageManager.GetString("Placeholder_NoCoverArt");
+
+                // Buttons
+                ChooseFolderButton.Content = LanguageManager.GetString("Button_ChooseFolder");
+                RefreshButton.Content = LanguageManager.GetString("Button_Refresh");
+                ExportCsvButton.Content = LanguageManager.GetString("Button_ExportCsv");
+                CancelRefreshButton.Content = LanguageManager.GetString("Button_Cancel");
+
+                AddImageButton.Content = LanguageManager.GetString("Button_AddImage");
+                ReplaceImageButton.Content = LanguageManager.GetString("Button_ReplaceImage");
+                DeleteImageButton.Content = LanguageManager.GetString("Button_DeleteImage");
+                SaveImageButton.Content = LanguageManager.GetString("Button_SaveImage");
+
+                // Subfolders toggle switch
+                ToolTipService.SetToolTip(SubfoldersToggle, LanguageManager.GetString("Subfolders_Search"));
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SubfoldersToggle, LanguageManager.GetString("Subfolders_Search"));
+
+                // Context Menu
+                RenameMenuItem.Text = LanguageManager.GetString("Menu_Rename");
+                DeleteMenuItem.Text = LanguageManager.GetString("Menu_Delete");
+                ReMuxMenuItem.Text = LanguageManager.GetString("Menu_ReMux");
+                ClearCacheMenuItem.Text = LanguageManager.GetString("Menu_ClearCache");
+                LanguageMenu.Text = LanguageManager.GetString("Menu_Language");
+                AboutMenuItem.Text = LanguageManager.GetString("Menu_About");
+
+                // Details Form Fields Headers
+                TitleTextBox.Header = LanguageManager.GetString("Prop_Title");
+                ParticipantsTextBox.Header = LanguageManager.GetString("Prop_Participants");
+                ReleaseDatePicker.Header = LanguageManager.GetString("Prop_ReleaseDate");
+                CatalogNumberTextBox.Header = LanguageManager.GetString("Prop_CatalogNumber");
+                RatingComboBox.Header = LanguageManager.GetString("Prop_Rating");
+                PublisherTextBox.Header = LanguageManager.GetString("Prop_Publisher");
+                ContentDistributorTextBox.Header = LanguageManager.GetString("Prop_ContentDistributor");
+                CategoryTextBox.Header = LanguageManager.GetString("Prop_Category");
+                CommentTextBox.Header = LanguageManager.GetString("Prop_Comment");
+                SaveMetadataButton.Content = LanguageManager.GetString("Button_Save");
+
+                // Technical Panel Fields Headers
+                DurationTextBox.Header = LanguageManager.GetString("Col_Duration");
+                FrameWidthTextBox.Header = LanguageManager.GetString("Col_FrameWidth");
+                FrameHeightTextBox.Header = LanguageManager.GetString("Col_FrameHeight");
+                FrameRateTextBox.Header = LanguageManager.GetString("Col_FrameRate");
+                VideoBitrateTextBox.Header = LanguageManager.GetString("Col_VideoBitrate");
+                VideoCompressionTextBox.Header = LanguageManager.GetString("Col_VideoCompression");
+                AudioSampleRateTextBox.Header = LanguageManager.GetString("Col_AudioSampleRate");
+                AudioBitrateTextBox.Header = LanguageManager.GetString("Col_AudioBitrate");
+                AudioFormatTextBox.Header = LanguageManager.GetString("Col_AudioFormat");
+
+                // Rating items
+                if (RatingComboBox.Items.Count >= 6)
+                {
+                    ((ComboBoxItem)RatingComboBox.Items[0]).Content = LanguageManager.GetString("Rating_0");
+                    ((ComboBoxItem)RatingComboBox.Items[1]).Content = LanguageManager.GetString("Rating_1");
+                    ((ComboBoxItem)RatingComboBox.Items[2]).Content = LanguageManager.GetString("Rating_2");
+                    ((ComboBoxItem)RatingComboBox.Items[3]).Content = LanguageManager.GetString("Rating_3");
+                    ((ComboBoxItem)RatingComboBox.Items[4]).Content = LanguageManager.GetString("Rating_4");
+                    ((ComboBoxItem)RatingComboBox.Items[5]).Content = LanguageManager.GetString("Rating_5");
+                }
+
+                // Localize DataGrid columns
+                foreach (var column in VideoListDataGrid.Columns)
+                {
+                    var tag = column.Tag as string;
+                    if (!string.IsNullOrEmpty(tag))
+                    {
+                        column.Header = LanguageManager.GetString($"Col_{tag}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("UIのローカライズ適用に失敗しました", ex);
+            }
+        }
+
+        private void InitializeLanguageMenu()
+        {
+            try
+            {
+                LanguageMenu.Items.Clear();
+                var localeDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "Locale");
+                if (Directory.Exists(localeDir))
+                {
+                    var files = Directory.GetFiles(localeDir, "*.json");
+                    foreach (var file in files)
+                    {
+                        var langCode = Path.GetFileNameWithoutExtension(file);
+                        string langName = langCode;
+                        try
+                        {
+                            var json = File.ReadAllText(file);
+                            using var doc = JsonDocument.Parse(json);
+                            if (doc.RootElement.TryGetProperty("LanguageName", out var prop))
+                            {
+                                langName = prop.GetString() ?? langCode;
+                            }
+                        }
+                        catch { }
+
+                        var menuItem = new MenuFlyoutItem
+                        {
+                            Text = langName,
+                            Tag = langCode
+                        };
+                        menuItem.Click += LanguageMenu_Click;
+                        LanguageMenu.Items.Add(menuItem);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("言語メニューの初期化に失敗しました", ex);
+            }
+        }
+
+        private void LanguageMenu_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuFlyoutItem menuItem && menuItem.Tag is string langCode)
+            {
+                var settings = SettingsManager.LoadSettings();
+                settings.Language = langCode;
+                SettingsManager.SaveSettings(settings);
+
+                LanguageManager.LoadLanguage(langCode);
+
+                ApplyLocalization();
+                InitializeLanguageMenu();
+
+                // Refresh videos list so column contents and statuses refresh
+                _ = ViewModel.RefreshFilesAsync();
+            }
         }
 
         private void RestoreLayoutSettings()
@@ -45,6 +189,34 @@ namespace Archivio.Views
                 if (settings.PropertiesColumnWidth > 0)
                 {
                     PropertiesColumn.Width = new GridLength(settings.PropertiesColumnWidth, GridUnitType.Pixel);
+                }
+                if (settings.TechnicalColumnWidth > 0)
+                {
+                    TechnicalColumn.Width = new GridLength(settings.TechnicalColumnWidth, GridUnitType.Pixel);
+                }
+
+                // Restore column order safely
+                if (settings.ColumnOrder != null && settings.ColumnOrder.Count > 0)
+                {
+                    var columnsToRestore = VideoListDataGrid.Columns
+                        .Select(c => new { Column = c, Tag = c.Tag as string })
+                        .Where(item => !string.IsNullOrEmpty(item.Tag) && settings.ColumnOrder.Contains(item.Tag))
+                        .Select(item => new { item.Column, TargetIndex = settings.ColumnOrder.IndexOf(item.Tag) })
+                        .OrderBy(item => item.TargetIndex)
+                        .ToList();
+
+                    foreach (var item in columnsToRestore)
+                    {
+                        int safeIndex = Math.Max(0, Math.Min(item.TargetIndex, VideoListDataGrid.Columns.Count - 1));
+                        try
+                        {
+                            item.Column.DisplayIndex = safeIndex;
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Error($"列 {item.Column.Tag} の表示順の復元に失敗しました", ex);
+                        }
+                    }
                 }
 
                 // Restore column widths
@@ -74,6 +246,14 @@ namespace Archivio.Views
                 settings.DetailsRowHeight = DetailsRow.Height.Value;
                 settings.CoverArtColumnWidth = CoverArtColumn.Width.Value;
                 settings.PropertiesColumnWidth = PropertiesColumn.Width.Value;
+                settings.TechnicalColumnWidth = TechnicalColumn.Width.Value;
+
+                // Save column order
+                settings.ColumnOrder = VideoListDataGrid.Columns
+                    .OrderBy(c => c.DisplayIndex)
+                    .Select(c => c.Tag as string)
+                    .Where(tag => !string.IsNullOrEmpty(tag))
+                    .ToList()!;
 
                 // Save column widths
                 settings.ColumnWidths.Clear();
@@ -280,6 +460,53 @@ namespace Archivio.Views
             
             // Save the master list on the itemsControl's Tag for search filtering
             itemsControl.Tag = list;
+
+            // Apply dynamic flyout localization
+            LocalizeFilterFlyout(stackPanel);
+        }
+
+        private void LocalizeFilterFlyout(StackPanel stackPanel)
+        {
+            try
+            {
+                var titleText = stackPanel.Children.OfType<TextBlock>().FirstOrDefault();
+                if (titleText != null)
+                {
+                    titleText.Text = LanguageManager.GetString("Filter_Title");
+                }
+
+                var searchBox = stackPanel.Children.OfType<TextBox>().FirstOrDefault(t => t.Name == "SearchValuesTextBox");
+                if (searchBox != null)
+                {
+                    searchBox.PlaceholderText = LanguageManager.GetString("Filter_Search");
+                }
+
+                var btnPanel = stackPanel.Children.OfType<StackPanel>().FirstOrDefault();
+                if (btnPanel != null)
+                {
+                    var buttons = btnPanel.Children.OfType<Button>().ToList();
+                    if (buttons.Count >= 2)
+                    {
+                        buttons[0].Content = LanguageManager.GetString("Filter_SelectAll");
+                        buttons[1].Content = LanguageManager.GetString("Filter_ClearAll");
+                    }
+                }
+
+                var grid = stackPanel.Children.OfType<Grid>().FirstOrDefault();
+                if (grid != null)
+                {
+                    var buttons = grid.Children.OfType<Button>().ToList();
+                    if (buttons.Count >= 2)
+                    {
+                        buttons[0].Content = LanguageManager.GetString("Filter_Apply");
+                        buttons[1].Content = LanguageManager.GetString("Filter_Clear");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("フィルターフライアウトのローカライズ適用に失敗しました", ex);
+            }
         }
 
         private void SearchValuesTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -440,17 +667,19 @@ namespace Archivio.Views
                 }
                 else
                 {
-                    args.Handled = true;
+                    // Clicked on empty space: clear selection
+                    VideoListDataGrid.SelectedItem = null;
                 }
             }
-            else
-            {
-                // Keyboard trigger: only allow if there is an item selected
-                if (VideoListDataGrid.SelectedItem == null)
-                {
-                    args.Handled = true;
-                }
-            }
+
+            // Dynamically enable/disable menu items
+            bool isItemSelected = (VideoListDataGrid.SelectedItem != null);
+            RenameMenuItem.IsEnabled = isItemSelected;
+            DeleteMenuItem.IsEnabled = isItemSelected;
+            ReMuxMenuItem.IsEnabled = isItemSelected;
+
+            bool isFolderSelected = !string.IsNullOrWhiteSpace(ViewModel.FolderPath);
+            ClearCacheMenuItem.IsEnabled = isFolderSelected;
         }
 
         private async void RenameMenuItem_Click(object sender, RoutedEventArgs e)
@@ -468,10 +697,10 @@ namespace Archivio.Views
 
             var dialog = new ContentDialog
             {
-                Title = "ファイル名の変更",
+                Title = LanguageManager.GetString("Dialog_Rename_Title"),
                 Content = textBox,
-                PrimaryButtonText = "変更",
-                CloseButtonText = "キャンセル",
+                PrimaryButtonText = LanguageManager.GetString("Button_Save"),
+                CloseButtonText = LanguageManager.GetString("Button_Cancel"),
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = this.XamlRoot
             };
@@ -494,10 +723,10 @@ namespace Archivio.Views
 
             var dialog = new ContentDialog
             {
-                Title = "ファイルの削除確認",
-                Content = $"本当に「{selectedVideo.FileName}」を削除しますか？\nこの操作は取り消せません。",
-                PrimaryButtonText = "削除",
-                CloseButtonText = "キャンセル",
+                Title = LanguageManager.GetString("Dialog_Delete_Title"),
+                Content = LanguageManager.GetString("Dialog_Delete_Message", selectedVideo.FileName),
+                PrimaryButtonText = LanguageManager.GetString("Button_Delete"),
+                CloseButtonText = LanguageManager.GetString("Button_Cancel"),
                 DefaultButton = ContentDialogButton.Close,
                 XamlRoot = this.XamlRoot
             };
@@ -515,6 +744,74 @@ namespace Archivio.Views
             if (selectedVideo == null) return;
 
             await ViewModel.ReMuxVideoAsync(selectedVideo);
+        }
+
+        private async void ClearCacheMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = LanguageManager.GetString("Dialog_ClearCache_Title"),
+                Content = LanguageManager.GetString("Dialog_ClearCache_Message"),
+                PrimaryButtonText = LanguageManager.GetString("Button_Clear"),
+                CloseButtonText = LanguageManager.GetString("Button_Cancel"),
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = this.XamlRoot
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                await ViewModel.ClearCurrentFolderCacheAsync();
+            }
+        }
+
+        private async void AboutMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var stackPanel = new StackPanel { Spacing = 12 };
+            
+            stackPanel.Children.Add(new TextBlock 
+            { 
+                Text = "Archivio (アルキーヴィオ)", 
+                FontSize = 18, 
+                FontWeight = Microsoft.UI.Text.FontWeights.Bold 
+            });
+
+            stackPanel.Children.Add(new TextBlock 
+            { 
+                Text = LanguageManager.GetString("Menu_About") + " v1.1.1", 
+                FontSize = 14 
+            });
+
+            stackPanel.Children.Add(new TextBlock 
+            { 
+                Text = LanguageManager.GetString("Dialog_About_Description"), 
+                TextWrapping = TextWrapping.WrapWholeWords,
+                FontSize = 13 
+            });
+
+            var linkPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            linkPanel.Children.Add(new TextBlock { Text = "GitHub:", VerticalAlignment = VerticalAlignment.Center });
+            
+            var hyperlink = new HyperlinkButton
+            {
+                Content = "https://github.com/tuozaijp-cpu/Archivio/",
+                NavigateUri = new Uri("https://github.com/tuozaijp-cpu/Archivio/"),
+                Padding = new Thickness(0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            linkPanel.Children.Add(hyperlink);
+            
+            stackPanel.Children.Add(linkPanel);
+
+            var dialog = new ContentDialog
+            {
+                Title = LanguageManager.GetString("Dialog_About_Title"),
+                Content = stackPanel,
+                CloseButtonText = LanguageManager.GetString("Button_Close"),
+                XamlRoot = this.XamlRoot
+            };
+
+            await dialog.ShowAsync();
         }
     }
 }

@@ -70,9 +70,11 @@
                     Click="ChooseFolderButton_Click"
                     Content="フォルダを選択" />
                 <Button
+                    x:Name="RefreshButton"
                     Click="RefreshButton_Click"
                     Content="再読み込み" />
                 <ToggleSwitch
+                    x:Name="SubfoldersToggle"
                     AutomationProperties.Name="サブフォルダーも検索"
                     IsOn="{x:Bind ViewModel.IncludeSubfolders, Mode=TwoWay}"
                     ToolTipService.ToolTip="サブフォルダーも検索"
@@ -88,6 +90,7 @@
                     Content="一覧をCSV保存"
                     IsEnabled="{x:Bind ViewModel.CanExportCsv, Mode=OneWay}" />
                 <Button
+                    x:Name="CancelRefreshButton"
                     Click="CancelRefreshButton_Click"
                     Content="中止"
                     IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
@@ -115,6 +118,7 @@
             </Grid.RowDefinitions>
             
             <TextBlock
+                x:Name="VideoListHeader"
                 Grid.Row="0"
                 Margin="0,0,0,8"
                 FontSize="18"
@@ -131,6 +135,7 @@
                     AutoGenerateColumns="False"
                     CanUserResizeColumns="True"
                     CanUserSortColumns="True"
+                    CanUserReorderColumns="True"
                     IsReadOnly="True"
                     ItemsSource="{x:Bind ViewModel.Videos, Mode=OneWay}"
                     SelectedItem="{x:Bind ViewModel.SelectedVideo, Mode=TwoWay}"
@@ -140,9 +145,14 @@
                     Sorting="VideoListDataGrid_Sorting">
                     <controls:DataGrid.ContextFlyout>
                         <MenuFlyout>
-                            <MenuFlyoutItem Text="ファイル名の変更" Click="RenameMenuItem_Click" />
-                            <MenuFlyoutItem Text="ファイルの削除" Click="DeleteMenuItem_Click" />
-                            <MenuFlyoutItem Text="Ffmpegでの再MUX" Click="ReMuxMenuItem_Click" />
+                            <MenuFlyoutItem x:Name="RenameMenuItem" Text="ファイル名の変更" Click="RenameMenuItem_Click" />
+                            <MenuFlyoutItem x:Name="DeleteMenuItem" Text="ファイルの削除" Click="DeleteMenuItem_Click" />
+                            <MenuFlyoutItem x:Name="ReMuxMenuItem" Text="Ffmpegでの再MUX" Click="ReMuxMenuItem_Click" />
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem x:Name="ClearCacheMenuItem" Text="キャッシュをクリア" Click="ClearCacheMenuItem_Click" />
+                            <MenuFlyoutSubItem x:Name="LanguageMenu" Text="表示言語 / Language" />
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem x:Name="AboutMenuItem" Text="Archivioについて" Click="AboutMenuItem_Click" />
                         </MenuFlyout>
                     </controls:DataGrid.ContextFlyout>
                     <controls:DataGrid.Columns>
@@ -193,6 +203,7 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             <TextBlock
+                x:Name="DetailsHeader"
                 Grid.Row="0"
                 Margin="0,0,0,8"
                 FontSize="18"
@@ -204,8 +215,11 @@
                     <!-- Left: Large Cover Art Area (6*) -->
                     <ColumnDefinition x:Name="CoverArtColumn" Width="6*" MinWidth="200" />
                     <ColumnDefinition Width="12" /> <!-- For GridSplitter -->
-                    <!-- Right: Editable properties panel (5*) -->
+                    <!-- Middle: Editable properties panel (5*) -->
                     <ColumnDefinition x:Name="PropertiesColumn" Width="5*" MinWidth="200" />
+                    <ColumnDefinition Width="12" /> <!-- For GridSplitter -->
+                    <!-- Right: Read-only technical properties panel (4*) -->
+                    <ColumnDefinition x:Name="TechnicalColumn" Width="4*" MinWidth="200" />
                 </Grid.ColumnDefinitions>
 
                 <!-- Left Panel: Cover Art FlipView and its associated edit toolbar -->
@@ -246,6 +260,7 @@
                                 Visibility="{x:Bind ViewModel.SelectedVideo.PlaceholderVisibility, Mode=OneWay}">
                                 <FontIcon Glyph="&#xEB9F;" FontSize="48" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock
+                                    x:Name="NoCoverArtText"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Text="カバーアートはありません" />
                             </StackPanel>
@@ -300,9 +315,11 @@
                 <ScrollViewer Grid.Column="2">
                     <StackPanel Spacing="12" Padding="0,0,12,0">
                         <TextBox
+                            x:Name="TitleTextBox"
                             Header="タイトル"
                             Text="{x:Bind ViewModel.SelectedVideo.Title, Mode=TwoWay}" />
                         <TextBox
+                            x:Name="ParticipantsTextBox"
                             Header="出演者"
                             Text="{x:Bind ViewModel.SelectedVideo.Participants, Mode=TwoWay}" />
                         <DatePicker
@@ -311,9 +328,11 @@
                             Date="{x:Bind ViewModel.SelectedVideo.ReleaseDate, Mode=OneWay}"
                             DateChanged="ReleaseDatePicker_DateChanged" />
                         <TextBox
+                            x:Name="CatalogNumberTextBox"
                             Header="品番"
                             Text="{x:Bind ViewModel.SelectedVideo.CatalogNumber, Mode=TwoWay}" />
                         <ComboBox
+                            x:Name="RatingComboBox"
                             Header="評価"
                             HorizontalAlignment="Stretch"
                             SelectedIndex="{x:Bind ViewModel.SelectedVideo.RatingStarsIndex, Mode=TwoWay}">
@@ -325,22 +344,92 @@
                             <ComboBoxItem Content="★★★★★ (5星)" />
                         </ComboBox>
                         <TextBox
+                            x:Name="PublisherTextBox"
                             Header="発行元"
                             Text="{x:Bind ViewModel.SelectedVideo.Publisher, Mode=TwoWay}" />
                         <TextBox
+                            x:Name="ContentDistributorTextBox"
                             Header="レーベル"
                             Text="{x:Bind ViewModel.SelectedVideo.ContentDistributor, Mode=TwoWay}" />
                         <TextBox
+                            x:Name="CategoryTextBox"
                             Header="カテゴリ"
                             Text="{x:Bind ViewModel.SelectedVideo.Category, Mode=TwoWay}" />
                         <TextBox
+                            x:Name="CommentTextBox"
                             Header="コメント"
                             Text="{x:Bind ViewModel.SelectedVideo.Comment, Mode=TwoWay}" />
                         <Button
+                            x:Name="SaveMetadataButton"
                             HorizontalAlignment="Left"
                             Content="保存"
                             Click="OnSaveClicked"
                             IsEnabled="{x:Bind ViewModel.SelectedVideo.HasMetadataChangesNotify, Mode=OneWay}" />
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Vertical GridSplitter between Properties Panel and Technical Properties Panel -->
+                <controls:GridSplitter
+                    Grid.Column="3"
+                    Width="12"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Stretch"
+                    ResizeBehavior="PreviousAndNext"
+                    ResizeDirection="Columns"
+                    Background="Transparent">
+                    <controls:GridSplitter.Element>
+                        <Grid HorizontalAlignment="Center" VerticalAlignment="Stretch" Width="2" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
+                    </controls:GridSplitter.Element>
+                </controls:GridSplitter>
+
+                <!-- Far Right Panel: Scrollable Non-Editable Technical Properties -->
+                <ScrollViewer Grid.Column="4">
+                    <StackPanel Spacing="12" Padding="0,0,12,0">
+                        <TextBox
+                            x:Name="DurationTextBox"
+                            Header="再生時間"
+                            IsReadOnly="True"
+                            Text="{x:Bind ViewModel.SelectedVideo.Duration, Mode=OneWay}" />
+                        <TextBox
+                            x:Name="FrameWidthTextBox"
+                            Header="フレーム幅"
+                            IsReadOnly="True"
+                            Text="{x:Bind ViewModel.SelectedVideo.FrameWidth, Mode=OneWay}" />
+                        <TextBox
+                            x:Name="FrameHeightTextBox"
+                            Header="フレーム高さ"
+                            IsReadOnly="True"
+                            Text="{x:Bind ViewModel.SelectedVideo.FrameHeight, Mode=OneWay}" />
+                        <TextBox
+                            x:Name="FrameRateTextBox"
+                            Header="フレームレート"
+                            IsReadOnly="True"
+                            Text="{x:Bind ViewModel.SelectedVideo.FrameRate, Mode=OneWay}" />
+                        <TextBox
+                            x:Name="VideoBitrateTextBox"
+                            Header="映像ビットレート"
+                            IsReadOnly="True"
+                            Text="{x:Bind ViewModel.SelectedVideo.VideoBitrate, Mode=OneWay}" />
+                        <TextBox
+                            x:Name="VideoCompressionTextBox"
+                            Header="圧縮方式"
+                            IsReadOnly="True"
+                            Text="{x:Bind ViewModel.SelectedVideo.VideoCompression, Mode=OneWay}" />
+                        <TextBox
+                            x:Name="AudioSampleRateTextBox"
+                            Header="サンプルレート"
+                            IsReadOnly="True"
+                            Text="{x:Bind ViewModel.SelectedVideo.AudioSampleRate, Mode=OneWay}" />
+                        <TextBox
+                            x:Name="AudioBitrateTextBox"
+                            Header="音声ビットレート"
+                            IsReadOnly="True"
+                            Text="{x:Bind ViewModel.SelectedVideo.AudioBitrate, Mode=OneWay}" />
+                        <TextBox
+                            x:Name="AudioFormatTextBox"
+                            Header="音声形式"
+                            IsReadOnly="True"
+                            Text="{x:Bind ViewModel.SelectedVideo.AudioFormat, Mode=OneWay}" />
                     </StackPanel>
                 </ScrollViewer>
             </Grid>

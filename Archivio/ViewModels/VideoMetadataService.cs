@@ -65,7 +65,7 @@ namespace Archivio.ViewModels
         private const string ArchivioTagOwner = "com.archivio";
         private const string ReleaseDateTagName = "ReleaseDate";
         private const string RatingTagName = "Rating";
-        private static readonly System.Threading.SemaphoreSlim WindowsPropertyReadSemaphore = new(1, 1);
+        private static readonly System.Threading.SemaphoreSlim WindowsPropertyReadSemaphore = new(4, 4);
         private readonly IMediaProbeService _mediaProbeService;
 
         public VideoMetadataService(IMediaProbeService? mediaProbeService = null)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -40,6 +41,7 @@ namespace Archivio.ViewModels
         private readonly List<VideoFileItem> _allVideosList = new();
         private readonly ConcurrentDictionary<string, VideoMetadataSnapshot> _metadataCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, ulong> _fileSizeCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, DateTimeOffset> _lastWriteTimeCache = new(StringComparer.OrdinalIgnoreCase);
 
         public MainPageViewModel() : this(new VideoMetadataService(), new VideoFileService())
         {
@@ -57,8 +59,28 @@ namespace Archivio.ViewModels
                 _metadataSaveSemaphore,
                 busy => IsBusy = busy,
                 (msg, ex, path) => SetStatusError(msg, ex, path),
-                msg => SetStatusSuccess(msg)
+                msg => SetStatusSuccess(msg),
+                () => FolderPath,
+                (path, size, mtime, meta) =>
+                {
+                    _fileSizeCache[path] = size;
+                    _lastWriteTimeCache[path] = mtime;
+                    _metadataCache[path] = meta;
+                }
             );
+
+            // 起動時に非同期でキャッシュのガベージコレクションを実行
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await MetadataCacheManager.GarbageCollectCacheAsync();
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("起動時のキャッシュGCに失敗しました", ex);
+                }
+            });
         }
 
         public VideoDetailsViewModel Details => _details;
@@ -112,6 +134,9 @@ namespace Archivio.ViewModels
             {
                 if (SetProperty(ref _folderPath, value))
                 {
+                    // フォルダが変わったときだけキャッシュをクリア
+                    MediaProbeService.ClearCache();
+                    _fileService.ClearEnumerationCache();
                     UpdateWindowTitle();
                 }
             }
@@ -265,33 +290,106 @@ namespace Archivio.ViewModels
                 return;
             }
 
+            // 再読み込み時は外部での変更（ファイルの追加・削除・移動など）を反映するため、ファイルスキャンキャッシュをクリア
+            _fileService.ClearEnumerationCache();
+
             _refreshCts?.Cancel();
             _refreshCts?.Dispose();
             _refreshCts = new CancellationTokenSource();
             var cancellationToken = _refreshCts.Token;
             IsBusy = true;
             HasOperationError = false;
-            StatusMessage = "動画ファイルを検索しています…";
+            StatusMessage = LanguageManager.GetString("Msg_SearchingVideos");
             try
             {
                 _metadataCache.Clear();
                 _fileSizeCache.Clear();
+                _lastWriteTimeCache.Clear();
+
+                // 永続化キャッシュの読み込み
+                var cache = await MetadataCacheManager.LoadCacheAsync(FolderPath);
+
                 var folder = await StorageFolder.GetFolderFromPathAsync(FolderPath);
                 var files = await _fileService.EnumerateVideoFilesAsync(folder, IncludeSubfolders, cancellationToken);
 
-                var items = new ObservableCollection<VideoFileItem>();
-                foreach (var file in files)
+                var processedItems = new VideoFileItem[files.Count];
+                var parallelOptions = new ParallelOptions
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount * 2),
+                    CancellationToken = cancellationToken
+                };
+
+                await Parallel.ForAsync(0, files.Count, parallelOptions, async (i, ct) =>
+                {
+                    var file = files[i];
                     try
                     {
                         var item = new VideoFileItem(file);
+
+                        // キャッシュヒットの判定
+                        if (cache != null && cache.Entries.TryGetValue(file.Path, out var cachedEntry))
+                        {
+                            try
+                            {
+                                var fileInfo = new System.IO.FileInfo(file.Path);
+                                if (fileInfo.Exists)
+                                {
+                                    var currentSize = (ulong)fileInfo.Length;
+                                    var currentModified = fileInfo.LastWriteTimeUtc;
+
+                                    // サイズと最終更新日の両方が一致しているか（1秒未満の誤差を許容）
+                                    if (cachedEntry.FileSize == currentSize && Math.Abs((cachedEntry.LastWriteTime - currentModified).TotalSeconds) < 1.0)
+                                    {
+                                        _fileSizeCache[file.Path] = cachedEntry.FileSize;
+                                        _metadataCache[file.Path] = cachedEntry.Metadata;
+                                        _lastWriteTimeCache[file.Path] = cachedEntry.LastWriteTime;
+
+                                        // キャッシュされたメタデータを item に直接適用
+                                        var metadata = cachedEntry.Metadata;
+                                        item.Title = metadata.Title;
+                                        item.Participants = metadata.Participants;
+                                        item.CatalogNumber = metadata.CatalogNumber;
+                                        item.Category = metadata.Category;
+                                        item.Rating = metadata.Rating;
+                                        item.ContentDistributor = metadata.ContentDistributor;
+                                        item.Publisher = metadata.Publisher;
+                                        item.Duration = metadata.Duration;
+                                        item.FrameWidth = metadata.FrameWidth;
+                                        item.FrameHeight = metadata.FrameHeight;
+                                        item.FrameRate = metadata.FrameRate;
+                                        item.VideoBitrate = metadata.VideoBitrate;
+                                        item.VideoCompression = metadata.VideoCompression;
+                                        item.AudioSampleRate = metadata.AudioSampleRate;
+                                        item.AudioBitrate = metadata.AudioBitrate;
+                                        item.AudioFormat = metadata.AudioFormat;
+                                        item.Comment = metadata.Comment;
+                                        item.ReleaseDateText = metadata.ReleaseDateText;
+                                        item.ReleaseDate = metadata.ReleaseDate;
+                                        item.IsLoaded = true;
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                AppLogger.Error("キャッシュ整合性検証中にエラーが発生しました", ex, file.Path);
+                            }
+                        }
+
                         await LoadBasicInfoAsync(item);
-                        items.Add(item);
+                        processedItems[i] = item;
                     }
                     catch (Exception ex)
                     {
                         AppLogger.Error("動画の基本情報の読み込みに失敗しました", ex, file.Path);
+                    }
+                });
+
+                var items = new ObservableCollection<VideoFileItem>();
+                foreach (var item in processedItems)
+                {
+                    if (item != null)
+                    {
+                        items.Add(item);
                     }
                 }
 
@@ -303,12 +401,12 @@ namespace Archivio.ViewModels
                 OnPropertyChanged(nameof(CanExportCsv));
                 SelectedVideo = null;
 
-                StatusMessage = $"{items.Count} 件の動画を読み込みました";
+                StatusMessage = LanguageManager.GetString("Msg_LoadedVideos", items.Count);
                 _ = LoadAllPropertiesSequentiallyAsync(items, cancellationToken);
             }
             catch (OperationCanceledException)
             {
-                StatusMessage = "読み込みを中止しました";
+                StatusMessage = LanguageManager.GetString("Msg_LoadingCancelled");
             }
             catch (Exception ex)
             {
@@ -318,7 +416,7 @@ namespace Archivio.ViewModels
                 _filterManager.ClearAllFilters();
                 SelectedVideo = null;
                 OnPropertyChanged(nameof(CanExportCsv));
-                SetStatusError("動画一覧の読み込みに失敗しました。詳細はログを確認してください。", ex);
+                SetStatusError(LanguageManager.GetString("Msg_LoadFailed"), ex);
             }
             finally
             {
@@ -336,6 +434,37 @@ namespace Archivio.ViewModels
             _refreshCts?.Cancel();
         }
 
+        public async Task ClearCurrentFolderCacheAsync()
+        {
+            if (string.IsNullOrWhiteSpace(FolderPath))
+            {
+                return;
+            }
+
+            // キャッシュ削除前に、実行中のバックグラウンド処理（上書き保存を伴う）を確実にキャンセル
+            CancelRefresh();
+
+            IsBusy = true;
+            try
+            {
+                await MetadataCacheManager.ClearCacheForFolderAsync(FolderPath);
+                _metadataCache.Clear();
+                _fileSizeCache.Clear();
+                _lastWriteTimeCache.Clear();
+                MediaProbeService.ClearCache();
+                SetStatusSuccess("キャッシュをクリアしました");
+                await RefreshFilesAsync();
+            }
+            catch (Exception ex)
+            {
+                SetStatusError("キャッシュのクリアに失敗しました", ex, FolderPath);
+            }
+            finally
+            {
+                IsBusy = false;
+            }
+        }
+
         public async Task RenameVideoAsync(VideoFileItem item, string newName)
         {
             if (string.IsNullOrWhiteSpace(newName) || newName == item.File.Name)
@@ -350,12 +479,44 @@ namespace Archivio.ViewModels
                 newName = System.IO.Path.GetFileNameWithoutExtension(newName) + oldExt;
             }
 
+            var oldPath = item.File.Path;
+
             item.IsSaving = true;
             HasOperationError = false;
             try
             {
                 await item.File.RenameAsync(newName, NameCollisionOption.FailIfExists);
                 item.SyncFromStorageFile();
+
+                // キャッシュの更新
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(FolderPath))
+                    {
+                        var newPath = item.File.Path;
+                        var fileInfo = new System.IO.FileInfo(newPath);
+                        var fileSize = (ulong)fileInfo.Length;
+                        var lastWriteTime = fileInfo.LastWriteTimeUtc;
+                        var currentMetadata = item.CreateCurrentMetadataSnapshot();
+
+                        // メモリキャッシュのキーも更新
+                        if (_metadataCache.TryRemove(oldPath, out var cachedMeta))
+                        {
+                            _metadataCache[newPath] = cachedMeta;
+                        }
+                        if (_fileSizeCache.TryRemove(oldPath, out _))
+                        {
+                            _fileSizeCache[newPath] = fileSize;
+                        }
+
+                        await MetadataCacheManager.RenameEntryAsync(FolderPath, oldPath, newPath, lastWriteTime, fileSize, currentMetadata);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("ファイル名変更後のキャッシュ更新に失敗しました", ex, item.File.Path);
+                }
+
                 SetStatusSuccess("ファイル名を変更しました");
             }
             catch (Exception ex)
@@ -376,6 +537,8 @@ namespace Archivio.ViewModels
                 return;
             }
 
+            var pathToRemove = item.File.Path;
+
             item.IsSaving = true;
             HasOperationError = false;
             try
@@ -388,6 +551,23 @@ namespace Archivio.ViewModels
                 }
                 _allVideosList.Remove(item);
                 Videos.Remove(item);
+
+                // キャッシュの削除
+                try
+                {
+                    _metadataCache.TryRemove(pathToRemove, out _);
+                    _fileSizeCache.TryRemove(pathToRemove, out _);
+
+                    if (!string.IsNullOrWhiteSpace(FolderPath))
+                    {
+                        await MetadataCacheManager.RemoveEntryAsync(FolderPath, pathToRemove);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("ファイル削除後のキャッシュ更新に失敗しました", ex, pathToRemove);
+                }
+
                 SetStatusSuccess("ファイルを削除しました");
             }
             catch (Exception ex)
@@ -409,7 +589,7 @@ namespace Archivio.ViewModels
 
             IsBusy = true;
             HasOperationError = false;
-            StatusMessage = "FFmpegで再MUX処理中…";
+            StatusMessage = LanguageManager.GetString("Msg_ReMuxing");
 
             try
             {
@@ -417,7 +597,7 @@ namespace Archivio.ViewModels
                 var dir = System.IO.Path.GetDirectoryName(inputPath);
                 if (string.IsNullOrWhiteSpace(dir))
                 {
-                    throw new Exception("フォルダパスの取得に失敗しました。");
+                    throw new Exception(LanguageManager.GetString("Msg_GetFolderPathFailed"));
                 }
 
                 var baseName = System.IO.Path.GetFileNameWithoutExtension(inputPath);
@@ -447,28 +627,97 @@ namespace Archivio.ViewModels
                     using var process = System.Diagnostics.Process.Start(startInfo);
                     if (process == null)
                     {
-                        throw new Exception("FFmpegプロセスの起動に失敗しました。");
+                        throw new Exception(LanguageManager.GetString("Msg_FFmpegProcessError"));
                     }
 
-                    var errorText = await process.StandardError.ReadToEndAsync();
-                    await process.WaitForExitAsync();
-
-                    if (process.ExitCode != 0)
+                    try
                     {
-                        throw new Exception($"FFmpegがエラーコード {process.ExitCode} で終了しました。\n{errorText}");
+                        var errorText = await process.StandardError.ReadToEndAsync();
+                        await process.WaitForExitAsync();
+
+                        if (process.ExitCode != 0)
+                        {
+                            throw new Exception(LanguageManager.GetString("Msg_FFmpegExitError", process.ExitCode, errorText));
+                        }
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            if (!process.HasExited)
+                            {
+                                process.Kill(true); // Kill entire process tree of ffmpeg to avoid orphaned processes!
+                            }
+                        }
+                        catch { }
+                        throw;
                     }
                 });
 
-                SetStatusSuccess("再MUX処理が完了しました");
-                await RefreshFilesAsync();
+                // 新しく作成されたファイルを直接ロードして挿入する
+                var newFile = await StorageFile.GetFileFromPathAsync(outPath);
+                var newItem = new VideoFileItem(newFile);
+
+                // 基本情報のロード
+                await LoadBasicInfoAsync(newItem);
+
+                // UIスレッド上で既存のコレクションへ直接挿入（フォルダ再検索を完全にスキップ）
+                await DispatcherHelper.RunOnUIThreadAsync(() =>
+                {
+                    var indexInAll = _allVideosList.IndexOf(item);
+                    if (indexInAll >= 0)
+                    {
+                        _allVideosList.Insert(indexInAll + 1, newItem);
+                    }
+                    else
+                    {
+                        _allVideosList.Add(newItem);
+                    }
+
+                    var indexInVideos = Videos.IndexOf(item);
+                    if (indexInVideos >= 0)
+                    {
+                        Videos.Insert(indexInVideos + 1, newItem);
+                    }
+                    else
+                    {
+                        Videos.Add(newItem);
+                    }
+
+                    // 新しく作成された動画を選択状態にする
+                    SelectedVideo = newItem;
+                });
+
+                // バックグラウンドでメタデータ読み込みとキャッシュ保存を実行
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var loaded = await LoadWindowsPropertiesAsync(newItem);
+                        if (loaded)
+                        {
+                            await DispatcherHelper.RunOnUIThreadAsync(() =>
+                            {
+                                newItem.IsLoaded = true;
+                            });
+                            await SaveCurrentFolderCacheAsync();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Error("再MUXファイルのバックグラウンドメタデータ読み込みに失敗しました", ex, outPath);
+                    }
+                });
+
+                SetStatusSuccess(LanguageManager.GetString("Msg_ReMuxSuccess"));
             }
             catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
             {
-                SetStatusError("ffmpegがシステムにインストールされていないか、環境変数 PATH に登録されていません。", ex, item.File.Path);
+                SetStatusError(LanguageManager.GetString("Msg_FFmpegMissing"), ex, item.File.Path);
             }
             catch (Exception ex)
             {
-                SetStatusError($"再MUX処理に失敗しました: {ex.Message}", ex, item.File.Path);
+                SetStatusError(LanguageManager.GetString("Msg_ReMuxFailed", ex.Message), ex, item.File.Path);
             }
             finally
             {
@@ -480,7 +729,7 @@ namespace Archivio.ViewModels
         {
             var options = new ParallelOptions
             {
-                MaxDegreeOfParallelism = Math.Min(4, Math.Max(1, items.Count)),
+                MaxDegreeOfParallelism = Math.Min(8, Math.Max(1, items.Count)),
                 CancellationToken = cancellationToken
             };
 
@@ -512,9 +761,75 @@ namespace Archivio.ViewModels
                         AppLogger.Error("バックグラウンドでのメタデータ読み込みに失敗しました", ex, item.File.Path);
                     }
                 });
+
+                if (Videos == items && !cancellationToken.IsCancellationRequested)
+                {
+                    await SaveCurrentFolderCacheAsync();
+                }
             }
             catch (OperationCanceledException)
             {
+            }
+        }
+
+        private async Task SaveCurrentFolderCacheAsync()
+        {
+            if (string.IsNullOrWhiteSpace(FolderPath))
+            {
+                return;
+            }
+
+            try
+            {
+                var cacheData = new FolderCacheData
+                {
+                    FolderPath = FolderPath,
+                    LastUpdated = DateTime.UtcNow
+                };
+
+                foreach (var pair in _metadataCache)
+                {
+                    var filePath = pair.Key;
+                    var metadata = pair.Value;
+                    if (_fileSizeCache.TryGetValue(filePath, out var fileSize))
+                    {
+                        if (_lastWriteTimeCache.TryGetValue(filePath, out var lastWriteTime))
+                        {
+                            cacheData.Entries[filePath] = new CacheEntry
+                            {
+                                LastWriteTime = lastWriteTime,
+                                FileSize = fileSize,
+                                Metadata = metadata
+                            };
+                        }
+                        else
+                        {
+                            try
+                            {
+                                var fileInfo = new System.IO.FileInfo(filePath);
+                                if (fileInfo.Exists)
+                                {
+                                    cacheData.Entries[filePath] = new CacheEntry
+                                    {
+                                        LastWriteTime = fileInfo.LastWriteTimeUtc,
+                                        FileSize = fileSize,
+                                        Metadata = metadata
+                                    };
+                                }
+                            }
+                            catch
+                            {
+                                // ファイルが移動・削除・ロックなどで情報取得できない場合はキャッシュしない
+                            }
+                        }
+                    }
+                }
+
+                await MetadataCacheManager.SaveCacheAsync(FolderPath, cacheData);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("現在のフォルダキャッシュの保存に失敗しました", ex, FolderPath);
             }
         }
 
@@ -533,18 +848,13 @@ namespace Archivio.ViewModels
 
             var currentVideo = SelectedVideo;
 
-            if (currentVideo.IsLoaded)
-            {
-                OnPropertyChanged(nameof(HasPendingChanges));
-                return;
-            }
-
             IsBusy = true;
             try
             {
                 cts.Token.ThrowIfCancellationRequested();
 
-                await LoadWindowsPropertiesAsync(currentVideo);
+                // キャッシュに頼らず直接ファイルから読み込み直すために force: true を指定
+                await LoadWindowsPropertiesAsync(currentVideo, force: true);
 
                 if (!cts.IsCancellationRequested && SelectedVideo == currentVideo)
                 {
@@ -590,6 +900,16 @@ namespace Archivio.ViewModels
                 _fileSizeCache[item.File.Path] = size;
                 item.FileSizeBytes = size;
                 item.FileSizeText = DisplayFormatHelper.FormatFileSize(size);
+
+                try
+                {
+                    var fileInfo = new System.IO.FileInfo(item.File.Path);
+                    if (fileInfo.Exists)
+                    {
+                        _lastWriteTimeCache[item.File.Path] = fileInfo.LastWriteTimeUtc;
+                    }
+                }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -741,7 +1061,7 @@ namespace Archivio.ViewModels
 
                 if (imagesData.Count > 0)
                 {
-                    await RunOnUIThreadAsync(async () =>
+                    await DispatcherHelper.RunOnUIThreadAsync(async () =>
                     {
                         try
                         {
@@ -775,7 +1095,7 @@ namespace Archivio.ViewModels
                 }
                 else
                 {
-                    await RunOnUIThreadAsync(() =>
+                    await DispatcherHelper.RunOnUIThreadAsync(() =>
                     {
                         item.CoverArts = new ObservableCollection<BitmapImage>();
                         item.CoverArt = null;
@@ -785,7 +1105,7 @@ namespace Archivio.ViewModels
             }
             catch
             {
-                await RunOnUIThreadAsync(() =>
+                await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
                     item.CoverArts = new ObservableCollection<BitmapImage>();
                     item.CoverArt = null;
@@ -872,7 +1192,7 @@ namespace Archivio.ViewModels
             }
         }
 
-        public async Task ReplaceCoverArtImageAsync()
+        public async Task ExportVideosToCsvAsync()
         {
             if (Videos == null || Videos.Count == 0)
             {
@@ -881,8 +1201,8 @@ namespace Archivio.ViewModels
 
             var savePicker = new FileSavePicker();
             savePicker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
-            savePicker.FileTypeChoices.Add("CSVファイル", new List<string>() { ".csv" });
-            savePicker.SuggestedFileName = "動画一覧.csv";
+            savePicker.FileTypeChoices.Add(LanguageManager.GetString("FileChoice_Csv"), new List<string>() { ".csv" });
+            savePicker.SuggestedFileName = LanguageManager.GetString("Csv_DefaultFileName");
 
             if (App.MainWindow is not null)
             {
@@ -950,11 +1270,11 @@ namespace Archivio.ViewModels
                     }
                 });
 
-                SetStatusSuccess($"CSV を保存しました: {file.Name}");
+                SetStatusSuccess(LanguageManager.GetString("Msg_CsvSaved", file.Name));
             }
             catch (Exception ex)
             {
-                SetStatusError($"CSV の保存に失敗しました: {ex.Message}", ex, file.Path);
+                SetStatusError(LanguageManager.GetString("Msg_CsvSaveFailed", ex.Message), ex, file.Path);
             }
             finally
             {

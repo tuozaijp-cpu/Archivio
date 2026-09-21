@@ -42,6 +42,7 @@ namespace Archivio
 
             // Load saved settings
             var settings = SettingsManager.LoadSettings();
+            LanguageManager.Initialize();
 
             if (window.AppWindow.Presenter is OverlappedPresenter presenter)
             {

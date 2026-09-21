@@ -11,6 +11,7 @@ namespace Archivio.ViewModels
     {
         Task<IReadOnlyList<StorageFile>> EnumerateVideoFilesAsync(StorageFolder folder, bool includeSubfolders, CancellationToken cancellationToken);
         Task<ulong> GetFileSizeAsync(StorageFile file);
+        void ClearEnumerationCache();
     }
 
     public sealed class VideoFileService : IVideoFileService
@@ -21,8 +22,19 @@ namespace Archivio.ViewModels
             ".ts", ".m2ts", ".mts", ".3gp", ".3g2", ".flv", ".ogv", ".vob", ".asf"
         };
 
+        // ファイル列挙結果のキャッシュ
+        private string _cachedFolderPath = string.Empty;
+        private bool _cachedIncludeSubfolders = false;
+        private IReadOnlyList<StorageFile>? _cachedFileList = null;
+
         public async Task<IReadOnlyList<StorageFile>> EnumerateVideoFilesAsync(StorageFolder folder, bool includeSubfolders, CancellationToken cancellationToken)
         {
+            // キャッシュが有効ならそれを返す
+            if (_cachedFileList != null && _cachedFolderPath == folder.Path && _cachedIncludeSubfolders == includeSubfolders)
+            {
+                return _cachedFileList;
+            }
+
             var result = new List<StorageFile>();
             var folders = new Queue<StorageFolder>();
             folders.Enqueue(folder);
@@ -60,6 +72,11 @@ namespace Archivio.ViewModels
                 }
             }
 
+            // キャッシュに保存
+            _cachedFolderPath = folder.Path;
+            _cachedIncludeSubfolders = includeSubfolders;
+            _cachedFileList = result;
+
             return result;
         }
 
@@ -75,6 +92,13 @@ namespace Archivio.ViewModels
                 AppLogger.Error("ファイルサイズの取得に失敗しました", ex, file.Path);
                 return 0;
             }
+        }
+
+        public void ClearEnumerationCache()
+        {
+            _cachedFileList = null;
+            _cachedFolderPath = string.Empty;
+            _cachedIncludeSubfolders = false;
         }
 
         private bool IsSupportedVideoFile(StorageFile file)

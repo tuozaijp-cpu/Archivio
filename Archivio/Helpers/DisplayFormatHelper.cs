@@ -8,7 +8,7 @@ namespace Archivio.Helpers
     {
         public static string FormatReleaseDateDisplayText(DateTimeOffset releaseDate)
         {
-            return releaseDate.Year > 1900 ? releaseDate.ToString("yyyy/MM/dd") : string.Empty;
+            return releaseDate.Year > 1900 ? releaseDate.ToString("d", System.Globalization.CultureInfo.CurrentUICulture) : string.Empty;
         }
 
         public static string FormatFileSize(ulong bytes)
