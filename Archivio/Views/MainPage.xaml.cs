@@ -333,17 +333,19 @@ namespace Archivio.Views
 
         private async void DataGrid_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
         {
-            if (ViewModel.SelectedVideo?.File is not null)
+            if (ViewModel.SelectedVideo is not null)
             {
-                await Windows.System.Launcher.LaunchFileAsync(ViewModel.SelectedVideo.File);
+                var file = await ViewModel.SelectedVideo.GetFileAsync();
+                await Windows.System.Launcher.LaunchFileAsync(file);
             }
         }
 
         private async void CoverArt_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
         {
-            if (ViewModel.SelectedVideo?.File is not null)
+            if (ViewModel.SelectedVideo is not null)
             {
-                await Windows.System.Launcher.LaunchFileAsync(ViewModel.SelectedVideo.File);
+                var file = await ViewModel.SelectedVideo.GetFileAsync();
+                await Windows.System.Launcher.LaunchFileAsync(file);
             }
         }
 
@@ -779,7 +781,7 @@ namespace Archivio.Views
 
             stackPanel.Children.Add(new TextBlock 
             { 
-                Text = LanguageManager.GetString("Menu_About") + " v1.1.1", 
+                Text = LanguageManager.GetString("Menu_About") + " v1.1.2", 
                 FontSize = 14 
             });
 

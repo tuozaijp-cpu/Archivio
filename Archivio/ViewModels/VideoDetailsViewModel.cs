@@ -125,10 +125,10 @@ namespace Archivio.ViewModels
             }
             catch (Exception ex)
             {
-                AppLogger.Error("選択中の動画カバー画像の読み込みに失敗しました", ex, item.File.Path);
+                AppLogger.Error("選択中の動画カバー画像の読み込みに失敗しました", ex, item.FullPath);
                 if (SelectedVideo == item)
                 {
-                    _setError("選択中の動画カバー画像の読み込みに失敗しました。詳細はログを確認してください。", ex, item.File.Path);
+                    _setError("選択中の動画カバー画像の読み込みに失敗しました。詳細はログを確認してください。", ex, item.FullPath);
                 }
             }
             finally
@@ -150,7 +150,8 @@ namespace Archivio.ViewModels
                     return;
                 }
 
-                var imagesData = (await _metadataService.LoadCoverArtImagesAsync(item.File)).ToList();
+                var file = await item.GetFileAsync();
+                var imagesData = (await _metadataService.LoadCoverArtImagesAsync(file)).ToList();
 
                 if (imagesData.Count > 0)
                 {
@@ -182,11 +183,11 @@ namespace Archivio.ViewModels
                         }
                         catch (Exception ex)
                         {
-                            AppLogger.Error("カバー画像の表示用変換に失敗しました", ex, item.File.Path);
+                            AppLogger.Error("カバー画像の表示用変換に失敗しました", ex, item.FullPath);
                             ClearCoverArtState(item);
                             if (SelectedVideo == item)
                             {
-                                _setError("カバー画像の表示に失敗しました。詳細はログを確認してください。", ex, item.File.Path);
+                                _setError("カバー画像の表示に失敗しました。詳細はログを確認してください。", ex, item.FullPath);
                             }
                         }
                     });
@@ -198,13 +199,13 @@ namespace Archivio.ViewModels
             }
             catch (Exception ex)
             {
-                AppLogger.Error("カバー画像の読み込みに失敗しました", ex, item.File.Path);
+                AppLogger.Error("カバー画像の読み込みに失敗しました", ex, item.FullPath);
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
                     ClearCoverArtState(item);
                     if (SelectedVideo == item)
                     {
-                        _setError("カバー画像の読み込みに失敗しました。詳細はログを確認してください。", ex, item.File.Path);
+                        _setError("カバー画像の読み込みに失敗しました。詳細はログを確認してください。", ex, item.FullPath);
                     }
                 });
             }
@@ -237,7 +238,8 @@ namespace Archivio.ViewModels
             try
             {
                 // キャッシュに頼らず、再度ファイルから直接メタデータを読み込む
-                var loadResult = await _metadataService.LoadMetadataAsync(targetVideo.File);
+                var targetFile = await targetVideo.GetFileAsync();
+                var loadResult = await _metadataService.LoadMetadataAsync(targetFile);
                 if (loadResult != null && loadResult.Metadata != null)
                 {
                     var freshMeta = loadResult.Metadata;
@@ -288,11 +290,11 @@ namespace Archivio.ViewModels
             }
             catch (Exception ex)
             {
-                AppLogger.Error("メタデータの保存に失敗しました", ex, targetVideo.File.Path);
+                AppLogger.Error("メタデータの保存に失敗しました", ex, targetVideo.FullPath);
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
                     targetVideo.SaveFailed = true;
-                    _setError($"保存エラー: {ex.Message}", ex, targetVideo.File.Path);
+                    _setError($"保存エラー: {ex.Message}", ex, targetVideo.FullPath);
                 });
             }
             finally
@@ -337,11 +339,11 @@ namespace Archivio.ViewModels
             }
             catch (Exception ex)
             {
-                AppLogger.Error("カバー画像の保存に失敗しました", ex, targetVideo.File.Path);
+                AppLogger.Error("カバー画像の保存に失敗しました", ex, targetVideo.FullPath);
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
                     targetVideo.SaveFailed = true;
-                    _setError($"画像保存エラー: {ex.Message}", ex, targetVideo.File.Path);
+                    _setError($"画像保存エラー: {ex.Message}", ex, targetVideo.FullPath);
                 });
             }
             finally
@@ -375,7 +377,8 @@ namespace Archivio.ViewModels
                 var metadata = item.CreateCurrentMetadataSnapshot();
                 var originalMetadata = item.CreateOriginalMetadataSnapshot();
 
-                var result = await _metadataService.SaveMetadataAsync(item.File, metadata, originalMetadata, changedProperties);
+                var file = await item.GetFileAsync();
+                var result = await _metadataService.SaveMetadataAsync(file, metadata, originalMetadata, changedProperties);
                 if (result.Succeeded)
                 {
                     try
@@ -383,23 +386,23 @@ namespace Archivio.ViewModels
                         var rootFolder = _getRootFolderPath();
                         if (!string.IsNullOrWhiteSpace(rootFolder))
                         {
-                            var fileInfo = new System.IO.FileInfo(item.File.Path);
+                            var fileInfo = new System.IO.FileInfo(item.FullPath);
                             var fileSize = (ulong)fileInfo.Length;
                             var lastWriteTime = fileInfo.LastWriteTimeUtc;
-                            await MetadataCacheManager.UpdateEntryAsync(rootFolder, item.File.Path, lastWriteTime, fileSize, metadata);
-                            _onMetadataUpdated?.Invoke(item.File.Path, fileSize, lastWriteTime, metadata);
+                            await MetadataCacheManager.UpdateEntryAsync(rootFolder, item.FullPath, lastWriteTime, fileSize, metadata);
+                            _onMetadataUpdated?.Invoke(item.FullPath, fileSize, lastWriteTime, metadata);
                         }
                     }
                     catch (Exception ex)
                     {
-                        AppLogger.Error("メタデータ保存後のキャッシュ更新に失敗しました", ex, item.File.Path);
+                        AppLogger.Error("メタデータ保存後のキャッシュ更新に失敗しました", ex, item.FullPath);
                     }
                 }
                 return result;
             }
             catch (Exception ex)
             {
-                AppLogger.Error("メタデータの保存に失敗しました", ex, item.File.Path);
+                AppLogger.Error("メタデータの保存に失敗しました", ex, item.FullPath);
                 return new VideoMetadataOperationResult
                 {
                     Succeeded = false,
@@ -418,11 +421,12 @@ namespace Archivio.ViewModels
             await _metadataSaveSemaphore.WaitAsync();
             try
             {
-                return await _metadataService.SaveCoverArtAsync(item.File, item.CoverArtImages);
+                var file = await item.GetFileAsync();
+                return await _metadataService.SaveCoverArtAsync(file, item.CoverArtImages);
             }
             catch (Exception ex)
             {
-                AppLogger.Error("カバー画像の保存に失敗しました", ex, item.File.Path);
+                AppLogger.Error("カバー画像の保存に失敗しました", ex, item.FullPath);
                 return new VideoMetadataOperationResult
                 {
                     Succeeded = false,

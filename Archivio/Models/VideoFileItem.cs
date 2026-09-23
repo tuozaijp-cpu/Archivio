@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Imaging;
 using TagLib;
 using Windows.Storage;
+using System.Threading.Tasks;
 
 namespace Archivio.Models
 {
@@ -55,12 +56,25 @@ namespace Archivio.Models
 
         public VideoFileItem(StorageFile file)
         {
-            File = file;
+            _file = file;
             _fileName = file.Name;
             _fullPath = file.Path;
         }
 
-        public StorageFile File { get; }
+        public VideoFileItem(string path)
+        {
+            _fullPath = path;
+            _fileName = System.IO.Path.GetFileName(path);
+        }
+
+        private StorageFile? _file;
+
+        public StorageFile? File => _file;
+
+        public async Task<StorageFile> GetFileAsync()
+        {
+            return _file ??= await StorageFile.GetFileFromPathAsync(_fullPath);
+        }
 
         public string FileName
         {
@@ -76,8 +90,9 @@ namespace Archivio.Models
 
         public void SyncFromStorageFile()
         {
-            _fileName = File.Name;
-            FullPath = File.Path;
+            if (_file is null) return;
+            _fileName = _file.Name;
+            FullPath = _file.Path;
             OnPropertyChanged(nameof(FileName));
         }
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,7 +10,7 @@ namespace Archivio.ViewModels
 {
     public interface IVideoFileService
     {
-        Task<IReadOnlyList<StorageFile>> EnumerateVideoFilesAsync(StorageFolder folder, bool includeSubfolders, CancellationToken cancellationToken);
+        Task<IReadOnlyList<string>> EnumerateVideoFilePathsAsync(StorageFolder folder, bool includeSubfolders, CancellationToken cancellationToken);
         Task<ulong> GetFileSizeAsync(StorageFile file);
         void ClearEnumerationCache();
     }
@@ -25,59 +26,43 @@ namespace Archivio.ViewModels
         // ファイル列挙結果のキャッシュ
         private string _cachedFolderPath = string.Empty;
         private bool _cachedIncludeSubfolders = false;
-        private IReadOnlyList<StorageFile>? _cachedFileList = null;
+        private IReadOnlyList<string>? _cachedPathList;
 
-        public async Task<IReadOnlyList<StorageFile>> EnumerateVideoFilesAsync(StorageFolder folder, bool includeSubfolders, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<string>> EnumerateVideoFilePathsAsync(StorageFolder folder, bool includeSubfolders, CancellationToken cancellationToken)
         {
             // キャッシュが有効ならそれを返す
-            if (_cachedFileList != null && _cachedFolderPath == folder.Path && _cachedIncludeSubfolders == includeSubfolders)
+            if (_cachedPathList != null && _cachedFolderPath == folder.Path && _cachedIncludeSubfolders == includeSubfolders)
             {
-                return _cachedFileList;
+                return Task.FromResult(_cachedPathList);
             }
 
-            var result = new List<StorageFile>();
-            var folders = new Queue<StorageFolder>();
-            folders.Enqueue(folder);
-
-            while (folders.Count > 0)
+            var result = new List<string>();
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var currentFolder = folders.Dequeue();
-                try
-                {
-                    foreach (var item in await currentFolder.GetFilesAsync())
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (IsSupportedVideoFile(item))
-                        {
-                            result.Add(item);
-                        }
-                    }
+                var enumerationOption = includeSubfolders
+                    ? System.IO.SearchOption.AllDirectories
+                    : System.IO.SearchOption.TopDirectoryOnly;
 
-                    if (includeSubfolders)
+                foreach (var path in Directory.EnumerateFiles(folder.Path, "*", enumerationOption))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (SupportedVideoExtensions.Contains(Path.GetExtension(path)))
                     {
-                        foreach (var childFolder in await currentFolder.GetFoldersAsync())
-                        {
-                            folders.Enqueue(childFolder);
-                        }
+                        result.Add(path);
                     }
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    AppLogger.Error("動画フォルダーの列挙に失敗しました", ex, currentFolder.Path);
                 }
             }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                AppLogger.Error("動画フォルダーの列挙に失敗しました", ex, folder.Path);
+            }
 
-            // キャッシュに保存
+            // 既存のStorageFileキャッシュは使用せず、パスだけをキャッシュする。
             _cachedFolderPath = folder.Path;
             _cachedIncludeSubfolders = includeSubfolders;
-            _cachedFileList = result;
-
-            return result;
+            _cachedPathList = result;
+            return Task.FromResult<IReadOnlyList<string>>(result);
         }
 
         public async Task<ulong> GetFileSizeAsync(StorageFile file)
@@ -96,7 +81,7 @@ namespace Archivio.ViewModels
 
         public void ClearEnumerationCache()
         {
-            _cachedFileList = null;
+            _cachedPathList = null;
             _cachedFolderPath = string.Empty;
             _cachedIncludeSubfolders = false;
         }

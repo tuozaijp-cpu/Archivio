@@ -30,5 +30,23 @@ namespace Archivio.ViewModels
                 // ログ失敗が本来の操作を妨げないようにする。
             }
         }
+
+        public static void Info(string message, string? targetPath = null)
+        {
+            try
+            {
+                var target = string.IsNullOrWhiteSpace(targetPath) ? string.Empty : $"{Environment.NewLine}対象: {targetPath}";
+                var entry = $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}] {message}{target}{Environment.NewLine}";
+                lock (SyncRoot)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(LogFile)!);
+                    File.AppendAllText(LogFile, entry);
+                }
+            }
+            catch
+            {
+                // ログ失敗が本来の操作を妨げないようにする。
+            }
+        }
     }
 }
