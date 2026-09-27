@@ -37,6 +37,7 @@ namespace Archivio.Models
         private string _releaseDateText = string.Empty;
         private DateTimeOffset _releaseDate = new(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
         private BitmapImage? _coverArt;
+        private BitmapImage? _thumbnailImage;
         private ObservableCollection<BitmapImage> _coverArts = new();
         private bool _hasCoverArt;
         private bool _isApplyingInitialValues;
@@ -45,6 +46,8 @@ namespace Archivio.Models
         private bool _isSaving;
         private bool _saveFailed;
         private bool _isCoverArtDirty;
+        private bool _isThumbnailLoading;
+        private bool _thumbnailLoadFailed;
         private bool _isDeleted;
         private int _selectedCoverArtIndex;
         private int _originalPictureBytesCount;
@@ -79,8 +82,18 @@ namespace Archivio.Models
         public string FileName
         {
             get => _fileName;
-            set => SetProperty(ref _fileName, value);
+            set
+            {
+                if (SetProperty(ref _fileName, value))
+                {
+                    OnPropertyChanged(nameof(DisplayTitle));
+                }
+            }
         }
+
+        public string DisplayTitle => string.IsNullOrWhiteSpace(Title) ? FileName : Title;
+
+        public string DisplayParticipants => string.IsNullOrWhiteSpace(Participants) ? "ー" : Participants;
 
         public string FullPath
         {
@@ -94,6 +107,7 @@ namespace Archivio.Models
             _fileName = _file.Name;
             FullPath = _file.Path;
             OnPropertyChanged(nameof(FileName));
+            OnPropertyChanged(nameof(DisplayTitle));
         }
 
         public ulong FileSizeBytes
@@ -169,6 +183,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _title, value))
                 {
+                    OnPropertyChanged(nameof(DisplayTitle));
                     UpdateChangeState(nameof(Title), value);
                 }
             }
@@ -181,6 +196,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _participants, value))
                 {
+                    OnPropertyChanged(nameof(DisplayParticipants));
                     UpdateChangeState(nameof(Participants), value);
                 }
             }
@@ -412,6 +428,59 @@ namespace Archivio.Models
         {
             get => _coverArt;
             set => SetProperty(ref _coverArt, value);
+        }
+
+        public BitmapImage? ThumbnailImage
+        {
+            get => _thumbnailImage;
+            set
+            {
+                if (SetProperty(ref _thumbnailImage, value))
+                {
+                    NotifyThumbnailStateChanged();
+                }
+            }
+        }
+
+        public bool IsThumbnailLoading
+        {
+            get => _isThumbnailLoading;
+            set
+            {
+                if (SetProperty(ref _isThumbnailLoading, value))
+                {
+                    NotifyThumbnailStateChanged();
+                }
+            }
+        }
+
+        public bool ThumbnailLoadFailed
+        {
+            get => _thumbnailLoadFailed;
+            set
+            {
+                if (SetProperty(ref _thumbnailLoadFailed, value))
+                {
+                    NotifyThumbnailStateChanged();
+                }
+            }
+        }
+
+        public Visibility ThumbnailLoadingVisibility => IsThumbnailLoading ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility ThumbnailEmptyVisibility => !IsThumbnailLoading && !ThumbnailLoadFailed && ThumbnailImage is null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        public Visibility ThumbnailErrorVisibility => !IsThumbnailLoading && ThumbnailLoadFailed
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        private void NotifyThumbnailStateChanged()
+        {
+            OnPropertyChanged(nameof(ThumbnailLoadingVisibility));
+            OnPropertyChanged(nameof(ThumbnailEmptyVisibility));
+            OnPropertyChanged(nameof(ThumbnailErrorVisibility));
         }
 
         public ObservableCollection<BitmapImage> CoverArts

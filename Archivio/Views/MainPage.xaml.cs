@@ -23,6 +23,7 @@ namespace Archivio.Views
         {
             this.InitializeComponent();
             DataContext = new MainPageViewModel();
+            VideoThumbnailGridView.ContextFlyout = VideoListDataGrid.ContextFlyout;
             ReleaseDatePicker.MinYear = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
             RestoreLayoutSettings();
             ApplyLocalization();
@@ -275,6 +276,20 @@ namespace Archivio.Views
 
         public MainPageViewModel ViewModel => (MainPageViewModel)DataContext;
 
+        private void DetailViewToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel.IsThumbnailView = false;
+            DetailViewToggleButton.IsChecked = true;
+            ThumbnailViewToggleButton.IsChecked = false;
+        }
+
+        private void ThumbnailViewToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel.IsThumbnailView = true;
+            DetailViewToggleButton.IsChecked = false;
+            ThumbnailViewToggleButton.IsChecked = true;
+        }
+
         private async void OnSaveClicked(object sender, RoutedEventArgs e)
         {
             await ViewModel.Details.SaveMetadataAsync();
@@ -338,6 +353,18 @@ namespace Archivio.Views
                 var file = await ViewModel.SelectedVideo.GetFileAsync();
                 await Windows.System.Launcher.LaunchFileAsync(file);
             }
+        }
+
+        private void VideoThumbnailGridView_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs args)
+        {
+            if (args.TryGetPosition(sender, out Windows.Foundation.Point point))
+            {
+                var elements = Microsoft.UI.Xaml.Media.VisualTreeHelper.FindElementsInHostCoordinates(point, sender);
+                var item = elements.OfType<GridViewItem>().FirstOrDefault();
+                VideoThumbnailGridView.SelectedItem = item?.DataContext as VideoFileItem;
+            }
+
+            UpdateContextMenuState();
         }
 
         private async void CoverArt_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
@@ -675,6 +702,11 @@ namespace Archivio.Views
                 }
             }
 
+            UpdateContextMenuState();
+        }
+
+        private void UpdateContextMenuState()
+        {
             // Dynamically enable/disable menu items
             bool isItemSelected = (VideoListDataGrid.SelectedItem != null);
             RenameMenuItem.IsEnabled = isItemSelected;
@@ -781,7 +813,7 @@ namespace Archivio.Views
 
             stackPanel.Children.Add(new TextBlock 
             { 
-                Text = LanguageManager.GetString("Menu_About") + " v1.1.2", 
+                Text = LanguageManager.GetString("Menu_About") + " v1.2.0",
                 FontSize = 14 
             });
 

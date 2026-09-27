@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <Page
+    x:Name="RootPage"
     x:Class="Archivio.Views.MainPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:CommunityToolkit.WinUI.UI.Controls"
     xmlns:primitives="using:CommunityToolkit.WinUI.UI.Controls.Primitives"
+    xmlns:models="using:Archivio.Models"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
@@ -82,8 +84,10 @@
                     OffContent="" />
                 <TextBox
                     Width="420"
-                    IsReadOnly="True"
-                    Text="{x:Bind ViewModel.FolderPath, Mode=OneWay}" />
+                    PlaceholderText="タイトル、出演者、ファイル名などを検索"
+                    Text="{x:Bind ViewModel.FilterText, Mode=TwoWay}"
+                    TextChanged="FilterTextBox_TextChanged"
+                    ToolTipService.ToolTip="タイトル、出演者、ファイル名などから動画を検索" />
                 <Button
                     x:Name="ExportCsvButton"
                     Click="ExportCsvButton_Click"
@@ -107,7 +111,30 @@
                     MaxWidth="420"
                     Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
                     TextWrapping="WrapWholeWords" />
-            </Border>
+                </Border>
+
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                <ToggleButton
+                    x:Name="DetailViewToggleButton"
+                    IsChecked="{x:Bind ViewModel.IsDetailView, Mode=OneWay}"
+                    Click="DetailViewToggleButton_Click"
+                    Content="詳細" />
+                <ToggleButton
+                    x:Name="ThumbnailViewToggleButton"
+                    IsChecked="{x:Bind ViewModel.IsThumbnailView, Mode=OneWay}"
+                    Click="ThumbnailViewToggleButton_Click"
+                    Content="タイル" />
+                <ComboBox
+                    x:Name="ThumbnailTileSizeComboBox"
+                    Width="100"
+                    SelectedIndex="{x:Bind ViewModel.ThumbnailTileSizeIndex, Mode=TwoWay}"
+                    ToolTipService.ToolTip="タイルサイズ">
+                    <ComboBoxItem Content="小" />
+                    <ComboBoxItem Content="標準" />
+                    <ComboBoxItem Content="大" />
+                    <ComboBoxItem Content="特大" />
+                </ComboBox>
+            </StackPanel>
         </Grid>
 
         <!-- Row 1: Video File List -->
@@ -130,7 +157,8 @@
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
                 CornerRadius="4">
-                <controls:DataGrid
+                <Grid>
+                    <controls:DataGrid
                     x:Name="VideoListDataGrid"
                     AutoGenerateColumns="False"
                     CanUserResizeColumns="True"
@@ -142,7 +170,8 @@
                     SelectionMode="Single"
                     DoubleTapped="DataGrid_DoubleTapped"
                     ContextRequested="VideoListDataGrid_ContextRequested"
-                    Sorting="VideoListDataGrid_Sorting">
+                    Sorting="VideoListDataGrid_Sorting"
+                    Visibility="{x:Bind ViewModel.DetailViewVisibility, Mode=OneWay}">
                     <controls:DataGrid.ContextFlyout>
                         <MenuFlyout>
                             <MenuFlyoutItem x:Name="RenameMenuItem" Text="ファイル名の変更" Click="RenameMenuItem_Click" />
@@ -179,7 +208,61 @@
                         <controls:DataGridTextColumn Binding="{Binding AudioBitrate}" Header="音声ビットレート" IsReadOnly="True" Width="110" Tag="AudioBitrate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
                         <controls:DataGridTextColumn Binding="{Binding AudioFormat}" Header="音声形式" IsReadOnly="True" Width="110" Tag="AudioFormat" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
                     </controls:DataGrid.Columns>
-                </controls:DataGrid>
+                    </controls:DataGrid>
+
+                <GridView
+                    x:Name="VideoThumbnailGridView"
+                    ItemsSource="{x:Bind ViewModel.Videos, Mode=OneWay}"
+                    SelectedItem="{x:Bind ViewModel.SelectedVideo, Mode=TwoWay}"
+                    SelectionMode="Single"
+                    IsItemClickEnabled="False"
+                    IsSwipeEnabled="False"
+                    DoubleTapped="DataGrid_DoubleTapped"
+                    ContextRequested="VideoThumbnailGridView_ContextRequested"
+                    IsTabStop="True"
+                    AutomationProperties.Name="動画一覧（サムネイル）"
+                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                    ScrollViewer.VerticalScrollBarVisibility="Auto"
+                    Visibility="{x:Bind ViewModel.ThumbnailViewVisibility, Mode=OneWay}">
+                    <GridView.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <ItemsWrapGrid Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </GridView.ItemsPanel>
+                    <GridView.ItemTemplate>
+                        <DataTemplate x:DataType="models:VideoFileItem">
+                            <Grid
+                                Width="{Binding DataContext.ThumbnailTileWidth, ElementName=RootPage}"
+                                Margin="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="{Binding DataContext.ThumbnailImageRowHeight, ElementName=RootPage}" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Border Grid.Row="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4">
+                                    <Grid>
+                                        <Image Source="{Binding ThumbnailImage}" Stretch="Uniform" />
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="{Binding ThumbnailLoadingVisibility}">
+                                            <ProgressRing IsActive="True" Width="36" Height="36" />
+                                            <TextBlock Text="読み込み中..." Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="{Binding ThumbnailEmptyVisibility}">
+                                            <FontIcon Glyph="&#xEB9F;" FontSize="36" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="カバーアートなし" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="{Binding ThumbnailErrorVisibility}">
+                                            <FontIcon Glyph="&#xE783;" FontSize="36" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="読み込み失敗" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                                <TextBlock Grid.Row="1" Margin="2,8,2,0" Text="{Binding DisplayTitle}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
+                                <TextBlock Grid.Row="2" Margin="2,2,2,0" Text="{Binding DisplayParticipants}" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </Grid>
+                        </DataTemplate>
+                    </GridView.ItemTemplate>
+                    </GridView>
+                </Grid>
             </Border>
         </Grid>
 

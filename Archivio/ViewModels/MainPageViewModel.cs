@@ -36,6 +36,8 @@ namespace Archivio.ViewModels
         private string _statusMessage = string.Empty;
         private bool _hasOperationError;
         private bool _includeSubfolders = true;
+        private bool _isThumbnailView;
+        private int _thumbnailTileSizeIndex = 1;
         private readonly VideoDetailsViewModel _details;
 
         private readonly VideoListFilterManager _filterManager = new();
@@ -43,6 +45,16 @@ namespace Archivio.ViewModels
         private readonly ConcurrentDictionary<string, VideoMetadataSnapshot> _metadataCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, ulong> _fileSizeCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, DateTimeOffset> _lastWriteTimeCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly SemaphoreSlim _thumbnailReadSemaphore = new(4, 4);
+        private readonly ConcurrentDictionary<string, ThumbnailCacheEntry> _thumbnailCache = new(StringComparer.OrdinalIgnoreCase);
+
+        private sealed class ThumbnailCacheEntry
+        {
+            public ulong FileSize { get; init; }
+            public DateTimeOffset LastWriteTime { get; init; }
+            public byte[] ImageData { get; init; } = Array.Empty<byte>();
+            public bool LoadFailed { get; init; }
+        }
 
         public MainPageViewModel() : this(new VideoMetadataService(), new VideoFileService())
         {
@@ -52,7 +64,10 @@ namespace Archivio.ViewModels
         {
             _metadataService = metadataService;
             _fileService = fileService;
-            _includeSubfolders = SettingsManager.LoadSettings().IncludeSubfolders;
+            var settings = SettingsManager.LoadSettings();
+            _includeSubfolders = settings.IncludeSubfolders;
+            _isThumbnailView = settings.IsThumbnailView;
+            _thumbnailTileSizeIndex = Math.Clamp(settings.ThumbnailTileSizeIndex, 0, 3);
 
             _details = new VideoDetailsViewModel(
                 _metadataService,
@@ -67,7 +82,8 @@ namespace Archivio.ViewModels
                     _fileSizeCache[path] = size;
                     _lastWriteTimeCache[path] = mtime;
                     _metadataCache[path] = meta;
-                }
+                },
+                OnCoverArtSaved
             );
 
             // 起動時に非同期でキャッシュのガベージコレクションを実行
@@ -314,6 +330,7 @@ namespace Archivio.ViewModels
 
                 var folder = await StorageFolder.GetFolderFromPathAsync(FolderPath);
                 var filePaths = await _fileService.EnumerateVideoFilePathsAsync(folder, IncludeSubfolders, cancellationToken);
+                PruneThumbnailCache(filePaths);
                 AppLogger.Info($"動画一覧: ファイル列挙完了 ({filePaths.Count} 件, {refreshTimer.ElapsedMilliseconds} ms)", FolderPath);
 
                 var processedItems = new VideoFileItem[filePaths.Count];
@@ -391,6 +408,7 @@ namespace Archivio.ViewModels
 
                 StatusMessage = LanguageManager.GetString("Msg_LoadedVideos", items.Count);
                 AppLogger.Info($"動画一覧: 一覧表示準備完了 ({items.Count} 件, {refreshTimer.ElapsedMilliseconds} ms)", FolderPath);
+                _ = LoadThumbnailsAsync(items, cancellationToken);
                 _ = LoadRemainingDataAsync(items, cancellationToken);
             }
             catch (OperationCanceledException)
@@ -440,6 +458,7 @@ namespace Archivio.ViewModels
                 _metadataCache.Clear();
                 _fileSizeCache.Clear();
                 _lastWriteTimeCache.Clear();
+                _thumbnailCache.Clear();
                 MediaProbeService.ClearCache();
                 SetStatusSuccess("キャッシュをクリアしました");
                 await RefreshFilesAsync();
@@ -490,10 +509,13 @@ namespace Archivio.ViewModels
                         var currentMetadata = item.CreateCurrentMetadataSnapshot();
 
                         // メモリキャッシュのキーも更新
-                        if (_metadataCache.TryRemove(oldPath, out var cachedMeta))
+                    if (_metadataCache.TryRemove(oldPath, out var cachedMeta))
                         {
                             _metadataCache[newPath] = cachedMeta;
                         }
+
+                        _thumbnailCache.TryRemove(oldPath, out _);
+                        _thumbnailCache.TryRemove(newPath, out _);
                         if (_fileSizeCache.TryRemove(oldPath, out _))
                         {
                             _fileSizeCache[newPath] = fileSize;
@@ -548,6 +570,7 @@ namespace Archivio.ViewModels
                 {
                     _metadataCache.TryRemove(pathToRemove, out _);
                     _fileSizeCache.TryRemove(pathToRemove, out _);
+                    _thumbnailCache.TryRemove(pathToRemove, out _);
 
                     if (!string.IsNullOrWhiteSpace(FolderPath))
                     {
@@ -763,6 +786,59 @@ namespace Archivio.ViewModels
             }
         }
 
+        public bool IsThumbnailView
+        {
+            get => _isThumbnailView;
+            set
+            {
+                if (SetProperty(ref _isThumbnailView, value))
+                {
+                    OnPropertyChanged(nameof(IsDetailView));
+                    OnPropertyChanged(nameof(DetailViewVisibility));
+                    OnPropertyChanged(nameof(ThumbnailViewVisibility));
+                }
+            }
+        }
+
+        public bool IsDetailView => !IsThumbnailView;
+
+        public int ThumbnailTileSizeIndex
+        {
+            get => _thumbnailTileSizeIndex;
+            set
+            {
+                var normalizedValue = Math.Clamp(value, 0, 3);
+                if (SetProperty(ref _thumbnailTileSizeIndex, normalizedValue))
+                {
+                    OnPropertyChanged(nameof(ThumbnailTileWidth));
+                    OnPropertyChanged(nameof(ThumbnailImageHeight));
+                    OnPropertyChanged(nameof(ThumbnailImageRowHeight));
+                }
+            }
+        }
+
+        public double ThumbnailTileWidth => ThumbnailTileSizeIndex switch
+        {
+            0 => 140,
+            2 => 240,
+            3 => 300,
+            _ => 180
+        };
+
+        public double ThumbnailImageHeight => ThumbnailTileSizeIndex switch
+        {
+            0 => 120,
+            2 => 210,
+            3 => 260,
+            _ => 160
+        };
+
+        public GridLength ThumbnailImageRowHeight => new(ThumbnailImageHeight);
+
+        public Visibility DetailViewVisibility => IsDetailView ? Visibility.Visible : Visibility.Collapsed;
+
+        public Visibility ThumbnailViewVisibility => IsThumbnailView ? Visibility.Visible : Visibility.Collapsed;
+
         /// <summary>
         /// 一覧表示後に基本情報とメタデータを補完する。
         /// 外付けドライブでも、詳細情報の取得を一覧表示から切り離す。
@@ -776,6 +852,226 @@ namespace Archivio.ViewModels
             }
             catch (OperationCanceledException)
             {
+            }
+        }
+
+        private async Task LoadThumbnailsAsync(ObservableCollection<VideoFileItem> items, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var tasks = items.Select(item => LoadThumbnailAsync(item, items, cancellationToken));
+                await Task.WhenAll(tasks);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        private void PruneThumbnailCache(IReadOnlyCollection<string> currentPaths)
+        {
+            var currentPathSet = new HashSet<string>(currentPaths, StringComparer.OrdinalIgnoreCase);
+            foreach (var cachedPath in _thumbnailCache.Keys)
+            {
+                if (!currentPathSet.Contains(cachedPath))
+                {
+                    _thumbnailCache.TryRemove(cachedPath, out _);
+                }
+            }
+        }
+
+        private void OnCoverArtSaved(string path)
+        {
+            _thumbnailCache.TryRemove(path, out _);
+
+            var item = Videos.FirstOrDefault(video =>
+                string.Equals(video.FullPath, path, StringComparison.OrdinalIgnoreCase));
+            if (item is not null)
+            {
+                _ = LoadThumbnailAsync(item, Videos, CancellationToken.None);
+            }
+        }
+
+        private static (bool Exists, ulong FileSize, DateTimeOffset LastWriteTime) GetThumbnailFileState(string path)
+        {
+            var fileInfo = new FileInfo(path);
+            if (!fileInfo.Exists)
+            {
+                return (false, 0, default);
+            }
+
+            return ((true, (ulong)fileInfo.Length, new DateTimeOffset(fileInfo.LastWriteTimeUtc)));
+        }
+
+        private static bool IsCurrentThumbnailCacheEntry(
+            ThumbnailCacheEntry entry,
+            (bool Exists, ulong FileSize, DateTimeOffset LastWriteTime) fileState)
+        {
+            return fileState.Exists
+                && entry.FileSize == fileState.FileSize
+                && entry.LastWriteTime == fileState.LastWriteTime;
+        }
+
+        private async Task ApplyThumbnailCacheEntryAsync(VideoFileItem item, ThumbnailCacheEntry entry)
+        {
+            if (entry.LoadFailed)
+            {
+                await DispatcherHelper.RunOnUIThreadAsync(() =>
+                {
+                    item.ThumbnailImage = null;
+                    item.ThumbnailLoadFailed = true;
+                    item.IsThumbnailLoading = false;
+                });
+                return;
+            }
+
+            if (entry.ImageData.Length == 0)
+            {
+                await DispatcherHelper.RunOnUIThreadAsync(() =>
+                {
+                    item.ThumbnailImage = null;
+                    item.ThumbnailLoadFailed = false;
+                    item.IsThumbnailLoading = false;
+                });
+                return;
+            }
+
+            await SetThumbnailImageAsync(item, entry.ImageData);
+        }
+
+        private async Task SetThumbnailImageAsync(VideoFileItem item, byte[] imageData)
+        {
+            await DispatcherHelper.RunOnUIThreadAsync(async () =>
+            {
+                using var stream = new InMemoryRandomAccessStream();
+                using var writer = new DataWriter(stream.GetOutputStreamAt(0));
+                writer.WriteBytes(imageData);
+                await writer.StoreAsync();
+                await writer.FlushAsync();
+                stream.Seek(0);
+
+                var bitmap = new BitmapImage
+                {
+                    DecodePixelWidth = 360,
+                    DecodePixelHeight = 320
+                };
+                await bitmap.SetSourceAsync(stream);
+
+                item.ThumbnailImage = bitmap;
+                item.ThumbnailLoadFailed = false;
+                item.IsThumbnailLoading = false;
+            });
+        }
+
+        private async Task LoadThumbnailAsync(
+            VideoFileItem item,
+            ObservableCollection<VideoFileItem> items,
+            CancellationToken cancellationToken)
+        {
+            await _thumbnailReadSemaphore.WaitAsync(cancellationToken);
+            try
+            {
+                await DispatcherHelper.RunOnUIThreadAsync(() =>
+                {
+                    item.ThumbnailImage = null;
+                    item.ThumbnailLoadFailed = false;
+                    item.IsThumbnailLoading = true;
+                });
+
+                var fileState = await Task.Run(() => GetThumbnailFileState(item.FullPath), cancellationToken);
+                if (!fileState.Exists)
+                {
+                    if (Videos == items)
+                    {
+                        await DispatcherHelper.RunOnUIThreadAsync(() =>
+                        {
+                            item.ThumbnailImage = null;
+                            item.ThumbnailLoadFailed = false;
+                            item.IsThumbnailLoading = false;
+                        });
+                    }
+
+                    return;
+                }
+
+                if (_thumbnailCache.TryGetValue(item.FullPath, out var cachedEntry)
+                    && IsCurrentThumbnailCacheEntry(cachedEntry, fileState))
+                {
+                    if (Videos == items)
+                    {
+                        await ApplyThumbnailCacheEntryAsync(item, cachedEntry);
+                    }
+
+                    return;
+                }
+
+                var file = await item.GetFileAsync();
+                var coverArt = await _metadataService.LoadThumbnailImageAsync(file, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (Videos != items)
+                {
+                    return;
+                }
+
+                if (coverArt is null)
+                {
+                    var emptyEntry = new ThumbnailCacheEntry
+                    {
+                        FileSize = fileState.FileSize,
+                        LastWriteTime = fileState.LastWriteTime
+                    };
+                    _thumbnailCache[item.FullPath] = emptyEntry;
+
+                    await DispatcherHelper.RunOnUIThreadAsync(() =>
+                    {
+                        item.ThumbnailImage = null;
+                        item.ThumbnailLoadFailed = false;
+                        item.IsThumbnailLoading = false;
+                    });
+                    return;
+                }
+
+                var imageData = coverArt.Data;
+                var loadedEntry = new ThumbnailCacheEntry
+                {
+                    FileSize = fileState.FileSize,
+                    LastWriteTime = fileState.LastWriteTime,
+                    ImageData = imageData
+                };
+                _thumbnailCache[item.FullPath] = loadedEntry;
+
+                await ApplyThumbnailCacheEntryAsync(item, loadedEntry);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("一覧用サムネイルの読み込みに失敗しました", ex, item.FullPath);
+                if (Videos == items)
+                {
+                    var fileState = await Task.Run(() => GetThumbnailFileState(item.FullPath));
+                    if (fileState.Exists)
+                    {
+                        _thumbnailCache[item.FullPath] = new ThumbnailCacheEntry
+                        {
+                            FileSize = fileState.FileSize,
+                            LastWriteTime = fileState.LastWriteTime,
+                            LoadFailed = true
+                        };
+                    }
+
+                    await DispatcherHelper.RunOnUIThreadAsync(() =>
+                    {
+                        item.ThumbnailImage = null;
+                        item.ThumbnailLoadFailed = true;
+                        item.IsThumbnailLoading = false;
+                    });
+                }
+            }
+            finally
+            {
+                _thumbnailReadSemaphore.Release();
             }
         }
 

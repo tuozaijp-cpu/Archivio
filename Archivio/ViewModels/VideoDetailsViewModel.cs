@@ -30,6 +30,7 @@ namespace Archivio.ViewModels
         private readonly Action<string> _setSuccess;
         private readonly Func<string> _getRootFolderPath;
         private readonly Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? _onMetadataUpdated;
+        private readonly Action<string>? _onCoverArtSaved;
 
         private VideoFileItem? _selectedVideo;
         private CancellationTokenSource? _loadingCts;
@@ -42,7 +43,8 @@ namespace Archivio.ViewModels
             Action<string, Exception?, string?> setError,
             Action<string> setSuccess,
             Func<string> getRootFolderPath,
-            Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? onMetadataUpdated = null)
+            Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? onMetadataUpdated = null,
+            Action<string>? onCoverArtSaved = null)
         {
             _metadataService = metadataService ?? throw new ArgumentNullException(nameof(metadataService));
             _metadataReadSemaphore = metadataReadSemaphore ?? throw new ArgumentNullException(nameof(metadataReadSemaphore));
@@ -52,6 +54,7 @@ namespace Archivio.ViewModels
             _setSuccess = setSuccess ?? throw new ArgumentNullException(nameof(setSuccess));
             _getRootFolderPath = getRootFolderPath ?? throw new ArgumentNullException(nameof(getRootFolderPath));
             _onMetadataUpdated = onMetadataUpdated;
+            _onCoverArtSaved = onCoverArtSaved;
         }
 
         public VideoFileItem? SelectedVideo
@@ -321,6 +324,10 @@ namespace Archivio.ViewModels
                 var result = await SaveCoverArtAsync(targetVideo);
 
                 await LoadCoverArtAsync(targetVideo, force: true);
+                if (result.Succeeded)
+                {
+                    _onCoverArtSaved?.Invoke(targetVideo.FullPath);
+                }
 
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {

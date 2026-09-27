@@ -21,6 +21,10 @@ namespace Archivio.ViewModels
         public List<string> ColumnOrder { get; set; } = new();
         public string Language { get; set; } = string.Empty;
         public bool IncludeSubfolders { get; set; } = true;
+        /// <summary>動画一覧をサムネイル表示するかどうか。既存設定では詳細表示になる。</summary>
+        public bool IsThumbnailView { get; set; } = false;
+        /// <summary>タイルサイズ。0=小、1=標準、2=大、3=特大。</summary>
+        public int ThumbnailTileSizeIndex { get; set; } = 1;
         /// <summary>任意の FFprobe 実行ファイル。空欄の場合は PATH 上の ffprobe を試す。</summary>
         public string FfprobePath { get; set; } = string.Empty;
     }

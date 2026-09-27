@@ -17,6 +17,7 @@ namespace Archivio.ViewModels
         Task<VideoMetadataLoadResult> LoadMetadataAsync(StorageFile file, CancellationToken cancellationToken = default);
         Task<VideoMetadataOperationResult> SaveMetadataAsync(StorageFile file, VideoMetadataSnapshot metadata, VideoMetadataSnapshot? originalMetadata, IEnumerable<string> changedProperties);
         Task<IReadOnlyList<CoverArtImageData>> LoadCoverArtImagesAsync(StorageFile file);
+        Task<CoverArtImageData?> LoadThumbnailImageAsync(StorageFile file, CancellationToken cancellationToken = default);
         Task<VideoMetadataOperationResult> SaveCoverArtAsync(StorageFile file, IEnumerable<CoverArtImageData> coverArtImages);
     }
 
@@ -450,6 +451,38 @@ namespace Archivio.ViewModels
             });
 
             return imagesData;
+        }
+
+        /// <summary>
+        /// 一覧表示用に、動画内の最初のカバーアートだけを読み込みます。
+        /// 詳細表示用の全カバーアート読み込みとは独立した処理です。
+        /// </summary>
+        public async Task<CoverArtImageData?> LoadThumbnailImageAsync(StorageFile file, CancellationToken cancellationToken = default)
+        {
+            return await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                using var tagFile = TagLib.File.Create(file.Path);
+                foreach (var picture in tagFile.Tag.Pictures)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (picture?.Data?.Data is null || picture.Data.Data.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    return new CoverArtImageData
+                    {
+                        Data = picture.Data.Data,
+                        MimeType = picture.MimeType ?? "image/jpeg",
+                        Description = picture.Description ?? string.Empty,
+                        Type = picture.Type
+                    };
+                }
+
+                return null;
+            }, cancellationToken);
         }
 
         public async Task<VideoMetadataOperationResult> SaveCoverArtAsync(StorageFile file, IEnumerable<CoverArtImageData> coverArtImages)
