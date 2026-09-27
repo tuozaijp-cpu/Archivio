@@ -216,6 +216,11 @@ namespace Archivio.ViewModels
 
         public Visibility DetailedPanelVisibility => IsVideoSelected ? Visibility.Visible : Visibility.Collapsed;
 
+        public void SetPlaybackError(string message)
+        {
+            SetStatusError(message);
+        }
+
         public string FilterText
         {
             get => _filterManager.FilterText;

@@ -321,6 +321,7 @@
                         BorderThickness="1"
                         CornerRadius="4">
                         <Grid>
+                            <Grid x:Name="CoverArtContent">
                             <FlipView
                                 x:Name="CoverArtFlipView"
                                 ItemsSource="{x:Bind ViewModel.SelectedVideo.CoverArts, Mode=OneWay}"
@@ -346,8 +347,13 @@
                                 <TextBlock
                                     x:Name="NoCoverArtText"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="カバーアートはありません" />
+                                Text="カバーアートはありません" />
                             </StackPanel>
+                            </Grid>
+
+                            <Grid
+                                x:Name="VideoPlaybackContent"
+                                Visibility="Collapsed" />
                         </Grid>
                     </Border>
 
@@ -358,6 +364,16 @@
                         Orientation="Horizontal"
                         HorizontalAlignment="Center"
                         Spacing="12">
+                        <ToggleButton
+                            x:Name="VideoPlaybackToggleButton"
+                            Content="再生"
+                            IsChecked="False"
+                            Click="VideoPlaybackToggleButton_Click" />
+                        <ToggleButton
+                            x:Name="CoverArtViewToggleButton"
+                            Content="画像"
+                            IsChecked="True"
+                            Click="CoverArtViewToggleButton_Click" />
                         <Button
                             x:Name="AddImageButton"
                             Content="画像追加"

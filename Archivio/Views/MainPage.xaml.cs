@@ -11,6 +11,8 @@ using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.Foundation;
+using Windows.Media.Core;
+using Windows.Media.Playback;
 using CommunityToolkit.WinUI.UI.Controls;
 
 namespace Archivio.Views
@@ -18,11 +20,18 @@ namespace Archivio.Views
     public partial class MainPage : Page
     {
         private Flyout? _activeFlyout;
+        private CancellationTokenSource? _playbackLoadCts;
+        private MediaPlayerElement? _videoPlayerElement;
+        private MediaPlayer? _playbackPlayer;
+        private bool _isPlaybackView;
 
         public MainPage()
         {
             this.InitializeComponent();
             DataContext = new MainPageViewModel();
+            ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+            Loaded += MainPage_Loaded;
+            Unloaded += MainPage_Unloaded;
             VideoThumbnailGridView.ContextFlyout = VideoListDataGrid.ContextFlyout;
             ReleaseDatePicker.MinYear = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
             RestoreLayoutSettings();
@@ -276,6 +285,23 @@ namespace Archivio.Views
 
         public MainPageViewModel ViewModel => (MainPageViewModel)DataContext;
 
+        private void MainPage_Loaded(object sender, RoutedEventArgs e)
+        {
+        }
+
+        private void MainPage_Unloaded(object sender, RoutedEventArgs e)
+        {
+            _playbackLoadCts?.Cancel();
+            _playbackPlayer?.Pause();
+            if (_videoPlayerElement is not null)
+            {
+                _videoPlayerElement.Source = null;
+                VideoPlaybackContent.Children.Clear();
+            }
+            _videoPlayerElement = null;
+            _playbackPlayer = null;
+        }
+
         private void DetailViewToggleButton_Click(object sender, RoutedEventArgs e)
         {
             ViewModel.IsThumbnailView = false;
@@ -352,6 +378,105 @@ namespace Archivio.Views
             {
                 var file = await ViewModel.SelectedVideo.GetFileAsync();
                 await Windows.System.Launcher.LaunchFileAsync(file);
+            }
+        }
+
+        private async void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(MainPageViewModel.SelectedVideo))
+            {
+                // 別ファイルを選択したら、現在の動画と標準コントロールを終了する。
+                _isPlaybackView = false;
+                CoverArtViewToggleButton.IsChecked = true;
+                VideoPlaybackToggleButton.IsChecked = false;
+                await UpdatePlaybackSourceAsync();
+            }
+        }
+
+        private async void CoverArtViewToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            _isPlaybackView = false;
+            CoverArtViewToggleButton.IsChecked = true;
+            VideoPlaybackToggleButton.IsChecked = false;
+            await UpdatePlaybackSourceAsync();
+        }
+
+        private async void VideoPlaybackToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            _isPlaybackView = true;
+            CoverArtViewToggleButton.IsChecked = false;
+            VideoPlaybackToggleButton.IsChecked = true;
+            await UpdatePlaybackSourceAsync();
+        }
+
+        private async Task UpdatePlaybackSourceAsync()
+        {
+            _playbackLoadCts?.Cancel();
+            _playbackLoadCts?.Dispose();
+            _playbackLoadCts = new CancellationTokenSource();
+            var cancellationToken = _playbackLoadCts.Token;
+
+            // 表示の切り替えはプレイヤーの生成状態に依存させない。
+            CoverArtContent.Visibility = _isPlaybackView ? Visibility.Collapsed : Visibility.Visible;
+            VideoPlaybackContent.Visibility = _isPlaybackView ? Visibility.Visible : Visibility.Collapsed;
+
+            if (!_isPlaybackView)
+            {
+                _playbackPlayer?.Pause();
+                if (_videoPlayerElement is not null)
+                {
+                    _videoPlayerElement.Source = null;
+                    VideoPlaybackContent.Children.Clear();
+                }
+                _videoPlayerElement = null;
+                _playbackPlayer = null;
+                return;
+            }
+
+            if (_isPlaybackView && _videoPlayerElement is null)
+            {
+                _videoPlayerElement = new MediaPlayerElement
+                {
+                    AreTransportControlsEnabled = true,
+                    AutoPlay = true
+                };
+                VideoPlaybackContent.Children.Add(_videoPlayerElement);
+                _playbackPlayer = _videoPlayerElement.MediaPlayer;
+            }
+
+            if (_playbackPlayer is null || _videoPlayerElement is null)
+            {
+                return;
+            }
+
+            _playbackPlayer.Pause();
+            _videoPlayerElement.Source = null;
+
+            if (ViewModel.SelectedVideo is null)
+            {
+                return;
+            }
+
+            try
+            {
+                var selectedVideo = ViewModel.SelectedVideo;
+                var file = await selectedVideo.GetFileAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (ViewModel.SelectedVideo != selectedVideo || !_isPlaybackView)
+                {
+                    return;
+                }
+
+                _videoPlayerElement.Source = MediaSource.CreateFromStorageFile(file);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("動画の再生準備に失敗しました", ex, ViewModel.SelectedVideo?.FullPath);
+                ViewModel.SetPlaybackError("動画を再生できませんでした。");
             }
         }
 
@@ -813,7 +938,7 @@ namespace Archivio.Views
 
             stackPanel.Children.Add(new TextBlock 
             { 
-                Text = LanguageManager.GetString("Menu_About") + " v1.2.0",
+                Text = LanguageManager.GetString("Menu_About") + " v1.3.0",
                 FontSize = 14 
             });
 
