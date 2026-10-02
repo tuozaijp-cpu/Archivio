@@ -33,6 +33,8 @@ namespace Archivio.ViewModels
         private readonly SemaphoreSlim _metadataSaveSemaphore = new(1, 1);
         private readonly IVideoMetadataService _metadataService;
         private readonly IVideoFileService _fileService;
+        private readonly IVideoFileOperationsService _fileOperationsService;
+        private readonly IVideoCsvExportService _csvExportService;
         private string _statusMessage = string.Empty;
         private bool _hasOperationError;
         private bool _includeSubfolders = true;
@@ -151,14 +153,29 @@ namespace Archivio.ViewModels
             }
         }
 
-        public MainPageViewModel() : this(new VideoMetadataService(), new VideoFileService())
+        public MainPageViewModel() : this(
+            new VideoMetadataService(),
+            new VideoFileService(),
+            new VideoFileOperationsService(),
+            new VideoCsvExportService())
         {
         }
 
         internal MainPageViewModel(IVideoMetadataService metadataService, IVideoFileService fileService)
+            : this(metadataService, fileService, new VideoFileOperationsService(), new VideoCsvExportService())
+        {
+        }
+
+        internal MainPageViewModel(
+            IVideoMetadataService metadataService,
+            IVideoFileService fileService,
+            IVideoFileOperationsService fileOperationsService,
+            IVideoCsvExportService csvExportService)
         {
             _metadataService = metadataService;
             _fileService = fileService;
+            _fileOperationsService = fileOperationsService;
+            _csvExportService = csvExportService;
             var settings = SettingsManager.LoadSettings();
             _includeSubfolders = settings.IncludeSubfolders;
             _isThumbnailView = settings.IsThumbnailView;
@@ -321,6 +338,14 @@ namespace Archivio.ViewModels
         public void SetPlaybackError(string message)
         {
             SetStatusError(message);
+        }
+
+        public void RefreshLocalizedText()
+        {
+            foreach (var item in _allVideosList)
+            {
+                item.RefreshLocalizedText();
+            }
         }
 
         public string FilterText
@@ -571,12 +596,12 @@ namespace Archivio.ViewModels
                 _lastWriteTimeCache.Clear();
                 _thumbnailCache.Clear();
                 MediaProbeService.ClearCache();
-                SetStatusSuccess("キャッシュをクリアしました");
+                SetStatusSuccess(LanguageManager.GetString("Msg_CacheCleared"));
                 await RefreshFilesAsync();
             }
             catch (Exception ex)
             {
-                SetStatusError("キャッシュのクリアに失敗しました", ex, FolderPath);
+                SetStatusError(LanguageManager.GetString("Msg_CacheClearFailed", ex.Message), ex, FolderPath);
             }
             finally
             {
@@ -592,20 +617,13 @@ namespace Archivio.ViewModels
                 return;
             }
 
-            var oldExt = System.IO.Path.GetExtension(item.FullPath);
-            var newExt = System.IO.Path.GetExtension(newName);
-            if (string.IsNullOrWhiteSpace(newExt) || !string.Equals(oldExt, newExt, StringComparison.OrdinalIgnoreCase))
-            {
-                newName = System.IO.Path.GetFileNameWithoutExtension(newName) + oldExt;
-            }
-
             var oldPath = item.FullPath;
 
             item.IsSaving = true;
             HasOperationError = false;
             try
             {
-                await file.RenameAsync(newName, NameCollisionOption.FailIfExists);
+                await _fileOperationsService.RenameAsync(file, newName);
                 item.SyncFromStorageFile();
 
                 // キャッシュの更新
@@ -640,12 +658,12 @@ namespace Archivio.ViewModels
                     AppLogger.Error("ファイル名変更後のキャッシュ更新に失敗しました", ex, item.FullPath);
                 }
 
-                SetStatusSuccess("ファイル名を変更しました");
+                SetStatusSuccess(LanguageManager.GetString("Msg_RenameSuccess"));
             }
             catch (Exception ex)
             {
                 item.SyncFromStorageFile();
-                SetStatusError($"ファイル名の変更に失敗しました: {ex.Message}", ex, item.FullPath);
+                SetStatusError(LanguageManager.GetString("Msg_RenameFailed", ex.Message), ex, item.FullPath);
             }
             finally
             {
@@ -667,7 +685,7 @@ namespace Archivio.ViewModels
             HasOperationError = false;
             try
             {
-                await file.DeleteAsync();
+                await _fileOperationsService.DeleteAsync(file);
                 item.IsDeleted = true;
                 if (SelectedVideo == item)
                 {
@@ -693,11 +711,11 @@ namespace Archivio.ViewModels
                     AppLogger.Error("ファイル削除後のキャッシュ更新に失敗しました", ex, pathToRemove);
                 }
 
-                SetStatusSuccess("ファイルを削除しました");
+                SetStatusSuccess(LanguageManager.GetString("Msg_DeleteSuccess"));
             }
             catch (Exception ex)
             {
-                SetStatusError($"ファイルの削除に失敗しました: {ex.Message}", ex, item.FullPath);
+                SetStatusError(LanguageManager.GetString("Msg_DeleteFailed", ex.Message), ex, item.FullPath);
             }
             finally
             {
@@ -718,79 +736,9 @@ namespace Archivio.ViewModels
 
             try
             {
-                var inputPath = item.FullPath;
-                var dir = System.IO.Path.GetDirectoryName(inputPath);
-                if (string.IsNullOrWhiteSpace(dir))
-                {
-                    throw new Exception(LanguageManager.GetString("Msg_GetFolderPathFailed"));
-                }
-
-                var baseName = System.IO.Path.GetFileNameWithoutExtension(inputPath);
-                var ext = System.IO.Path.GetExtension(inputPath) ?? ".mp4";
-                var outPath = System.IO.Path.Combine(dir, baseName + "_ReMUX" + ext);
-                for (var suffix = 2; File.Exists(outPath) || Directory.Exists(outPath); suffix++)
-                {
-                    outPath = System.IO.Path.Combine(dir, $"{baseName}_ReMUX_{suffix}{ext}");
-                }
-
-                var supportsFastStart = ext.Equals(".mp4", StringComparison.OrdinalIgnoreCase) ||
-                    ext.Equals(".m4v", StringComparison.OrdinalIgnoreCase) ||
-                    ext.Equals(".mov", StringComparison.OrdinalIgnoreCase) ||
-                    ext.Equals(".3gp", StringComparison.OrdinalIgnoreCase);
-
-                var startInfo = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "ffmpeg",
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                startInfo.ArgumentList.Add("-n");
-                startInfo.ArgumentList.Add("-i");
-                startInfo.ArgumentList.Add(inputPath);
-                startInfo.ArgumentList.Add("-c");
-                startInfo.ArgumentList.Add("copy");
-                if (supportsFastStart)
-                {
-                    startInfo.ArgumentList.Add("-movflags");
-                    startInfo.ArgumentList.Add("+faststart");
-                }
-                startInfo.ArgumentList.Add(outPath);
-
-                await Task.Run(async () =>
-                {
-                    using var process = System.Diagnostics.Process.Start(startInfo);
-                    if (process == null)
-                    {
-                        throw new Exception(LanguageManager.GetString("Msg_FFmpegProcessError"));
-                    }
-
-                    try
-                    {
-                        var errorText = await process.StandardError.ReadToEndAsync();
-                        await process.WaitForExitAsync();
-
-                        if (process.ExitCode != 0)
-                        {
-                            throw new Exception(LanguageManager.GetString("Msg_FFmpegExitError", process.ExitCode, errorText));
-                        }
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            if (!process.HasExited)
-                            {
-                                process.Kill(true); // Kill entire process tree of ffmpeg to avoid orphaned processes!
-                            }
-                        }
-                        catch { }
-                        throw;
-                    }
-                });
-
                 // 新しく作成されたファイルを直接ロードして挿入する
-                var newFile = await StorageFile.GetFileFromPathAsync(outPath);
+                var sourceFile = await item.GetFileAsync();
+                var newFile = await _fileOperationsService.ReMuxAsync(sourceFile);
                 var newItem = new VideoFileItem(newFile);
 
                 // 基本情報のロード
@@ -840,7 +788,7 @@ namespace Archivio.ViewModels
                     }
                     catch (Exception ex)
                     {
-                        AppLogger.Error("再MUXファイルのバックグラウンドメタデータ読み込みに失敗しました", ex, outPath);
+                        AppLogger.Error("再MUXファイルのバックグラウンドメタデータ読み込みに失敗しました", ex, newFile.Path);
                     }
                 });
 
@@ -849,6 +797,16 @@ namespace Archivio.ViewModels
             catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
             {
                 SetStatusError(LanguageManager.GetString("Msg_FFmpegMissing"), ex, item.FullPath);
+            }
+            catch (FfmpegProcessStartException ex)
+            {
+                var message = LanguageManager.GetString("Msg_FFmpegProcessError");
+                SetStatusError(LanguageManager.GetString("Msg_ReMuxFailed", message), ex, item.FullPath);
+            }
+            catch (FfmpegExecutionException ex)
+            {
+                var message = LanguageManager.GetString("Msg_FFmpegExitError", ex.ExitCode, ex.ErrorText);
+                SetStatusError(LanguageManager.GetString("Msg_ReMuxFailed", message), ex, item.FullPath);
             }
             catch (Exception ex)
             {
@@ -1309,7 +1267,7 @@ namespace Archivio.ViewModels
                 AppLogger.Error("選択中の動画の読み込みに失敗しました", ex, currentVideo.FullPath);
                 if (SelectedVideo == currentVideo)
                 {
-                    SetStatusError("選択中の動画の読み込みに失敗しました。詳細はログを確認してください。", ex, currentVideo.FullPath);
+                    SetStatusError(LanguageManager.GetString("Msg_SelectedLoadFailed"), ex, currentVideo.FullPath);
                 }
             }
             finally
@@ -1472,7 +1430,7 @@ namespace Archivio.ViewModels
 
             if (changedProperties.Count == 0)
             {
-                return new VideoMetadataOperationResult { Succeeded = true, Message = "変更なし" };
+                return new VideoMetadataOperationResult { Succeeded = true, Message = LanguageManager.GetString("Msg_NoChanges") };
             }
 
             await _metadataSaveSemaphore.WaitAsync();
@@ -1490,7 +1448,7 @@ namespace Archivio.ViewModels
                 return new VideoMetadataOperationResult
                 {
                     Succeeded = false,
-                    Message = "保存に失敗しました",
+                    Message = LanguageManager.GetString("Msg_SaveFailed"),
                     Details = ex.Message
                 };
             }
@@ -1585,7 +1543,7 @@ namespace Archivio.ViewModels
                 return new VideoMetadataOperationResult
                 {
                     Succeeded = false,
-                    Message = "カバー画像の保存に失敗しました",
+                    Message = LanguageManager.GetString("Msg_CoverImageSaveFailed"),
                     Details = ex.Message
                 };
             }
@@ -1671,59 +1629,33 @@ namespace Archivio.ViewModels
                 return;
             }
 
+            var rows = Videos.Select(item => new VideoCsvRow(
+                item.FileName,
+                item.FileSizeText,
+                item.Title,
+                item.Participants,
+                item.ReleaseDateText,
+                item.CatalogNumber,
+                item.Rating,
+                item.Publisher,
+                item.ContentDistributor,
+                item.Category,
+                item.Comment,
+                item.Duration,
+                item.FrameWidth,
+                item.FrameHeight,
+                item.FrameRate,
+                item.VideoBitrate,
+                item.VideoCompression,
+                item.AudioSampleRate,
+                item.AudioBitrate,
+                item.AudioFormat)).ToArray();
+
             IsBusy = true;
             HasOperationError = false;
             try
             {
-                await Task.Run(async () =>
-                {
-                    var headers = new[]
-                    {
-                        "ファイル名", "サイズ", "タイトル", "出演者", "発売日", "品番",
-                        "評価", "発行元", "レーベル", "カテゴリ", "コメント", "再生時間",
-                        "フレーム幅", "フレーム高さ", "フレームレート", "映像ビットレート",
-                        "圧縮方式", "サンプルレート", "音声ビットレート", "音声形式"
-                    };
-
-                    var lines = new List<string> { string.Join(",", headers.Select(DisplayFormatHelper.EscapeCsvField)) };
-
-                    foreach (var item in Videos)
-                    {
-                        var fields = new[]
-                        {
-                            item.FileName,
-                            item.FileSizeText,
-                            item.Title,
-                            item.Participants,
-                            item.ReleaseDateText,
-                            item.CatalogNumber,
-                            item.Rating,
-                            item.Publisher,
-                            item.ContentDistributor,
-                            item.Category,
-                            item.Comment,
-                            item.Duration,
-                            item.FrameWidth,
-                            item.FrameHeight,
-                            item.FrameRate,
-                            item.VideoBitrate,
-                            item.VideoCompression,
-                            item.AudioSampleRate,
-                            item.AudioBitrate,
-                            item.AudioFormat
-                        };
-                        lines.Add(string.Join(",", fields.Select(DisplayFormatHelper.EscapeCsvField)));
-                    }
-
-                    using var stream = await file.OpenStreamForWriteAsync();
-                    stream.SetLength(0);
-                    using var writer = new System.IO.StreamWriter(stream, new System.Text.UTF8Encoding(true));
-
-                    foreach (var line in lines)
-                    {
-                        await writer.WriteLineAsync(line);
-                    }
-                });
+                await _csvExportService.ExportAsync(file, rows);
 
                 SetStatusSuccess(LanguageManager.GetString("Msg_CsvSaved", file.Name));
             }

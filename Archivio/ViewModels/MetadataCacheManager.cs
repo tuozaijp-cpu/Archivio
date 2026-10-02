@@ -91,7 +91,7 @@ namespace Archivio.ViewModels
                 }
 
                 var cacheFile = GetCacheFilePath(folderPath);
-                tempFile = cacheFile + ".tmp";
+                tempFile = $"{cacheFile}.{Guid.NewGuid():N}.tmp";
 
                 var json = JsonSerializer.Serialize(cacheData, SerializerOptions);
 
@@ -99,9 +99,19 @@ namespace Archivio.ViewModels
 
                 if (File.Exists(cacheFile))
                 {
-                    File.Delete(cacheFile);
+                    ReplaceCacheFile(tempFile, cacheFile);
                 }
-                File.Move(tempFile, cacheFile);
+                else
+                {
+                    try
+                    {
+                        File.Move(tempFile, cacheFile);
+                    }
+                    catch (IOException) when (File.Exists(cacheFile))
+                    {
+                        ReplaceCacheFile(tempFile, cacheFile);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -109,6 +119,31 @@ namespace Archivio.ViewModels
                 if (tempFile != null && File.Exists(tempFile))
                 {
                     try { File.Delete(tempFile); } catch { }
+                }
+            }
+        }
+
+        private static void ReplaceCacheFile(string tempFile, string cacheFile)
+        {
+            var backupFile = $"{cacheFile}.{Guid.NewGuid():N}.bak";
+            var replaced = false;
+            try
+            {
+                File.Replace(tempFile, cacheFile, backupFile);
+                replaced = true;
+            }
+            finally
+            {
+                if (replaced && File.Exists(backupFile))
+                {
+                    try
+                    {
+                        File.Delete(backupFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Error("キャッシュバックアップの削除に失敗しました", ex, backupFile);
+                    }
                 }
             }
         }

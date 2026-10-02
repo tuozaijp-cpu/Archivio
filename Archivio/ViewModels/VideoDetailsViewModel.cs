@@ -131,7 +131,7 @@ namespace Archivio.ViewModels
                 AppLogger.Error("選択中の動画カバー画像の読み込みに失敗しました", ex, item.FullPath);
                 if (SelectedVideo == item)
                 {
-                    _setError("選択中の動画カバー画像の読み込みに失敗しました。詳細はログを確認してください。", ex, item.FullPath);
+                    _setError(LanguageManager.GetString("Msg_SelectedCoverArtLoadFailed"), ex, item.FullPath);
                 }
             }
             finally
@@ -190,7 +190,7 @@ namespace Archivio.ViewModels
                             ClearCoverArtState(item);
                             if (SelectedVideo == item)
                             {
-                                _setError("カバー画像の表示に失敗しました。詳細はログを確認してください。", ex, item.FullPath);
+                                _setError(LanguageManager.GetString("Msg_CoverArtDisplayFailed"), ex, item.FullPath);
                             }
                         }
                     });
@@ -208,7 +208,7 @@ namespace Archivio.ViewModels
                     ClearCoverArtState(item);
                     if (SelectedVideo == item)
                     {
-                        _setError("カバー画像の読み込みに失敗しました。詳細はログを確認してください。", ex, item.FullPath);
+                        _setError(LanguageManager.GetString("Msg_CoverArtLoadFailed"), ex, item.FullPath);
                     }
                 });
             }
@@ -259,7 +259,7 @@ namespace Archivio.ViewModels
                             // _originalValuesをファイルから読み込んだ最新値に更新することで変更トラッキングをリセットする
                             targetVideo.UpdateOriginalValuesFromSnapshot(freshMeta);
                             
-                            _setSuccess("変更なし");
+                            _setSuccess(LanguageManager.GetString("Msg_NoChanges"));
                             OnPropertyChanged(nameof(HasPendingChanges));
                         });
                         return;
@@ -297,7 +297,7 @@ namespace Archivio.ViewModels
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
                     targetVideo.SaveFailed = true;
-                    _setError($"保存エラー: {ex.Message}", ex, targetVideo.FullPath);
+                    _setError(LanguageManager.GetString("Msg_SaveError", ex.Message), ex, targetVideo.FullPath);
                 });
             }
             finally
@@ -350,7 +350,7 @@ namespace Archivio.ViewModels
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
                     targetVideo.SaveFailed = true;
-                    _setError($"画像保存エラー: {ex.Message}", ex, targetVideo.FullPath);
+                    _setError(LanguageManager.GetString("Msg_ImageSaveError", ex.Message), ex, targetVideo.FullPath);
                 });
             }
             finally
@@ -375,7 +375,7 @@ namespace Archivio.ViewModels
 
             if (changedProperties.Count == 0)
             {
-                return new VideoMetadataOperationResult { Succeeded = true, Message = "変更なし" };
+                return new VideoMetadataOperationResult { Succeeded = true, Message = LanguageManager.GetString("Msg_NoChanges") };
             }
 
             await _metadataSaveSemaphore.WaitAsync();
@@ -413,7 +413,7 @@ namespace Archivio.ViewModels
                 return new VideoMetadataOperationResult
                 {
                     Succeeded = false,
-                    Message = "保存に失敗しました",
+                    Message = LanguageManager.GetString("Msg_SaveError", ex.Message),
                     Details = ex.Message
                 };
             }
@@ -437,7 +437,7 @@ namespace Archivio.ViewModels
                 return new VideoMetadataOperationResult
                 {
                     Succeeded = false,
-                    Message = "カバー画像の保存に失敗しました",
+                    Message = LanguageManager.GetString("Msg_CoverImageSaveFailed"),
                     Details = ex.Message
                 };
             }
@@ -501,7 +501,7 @@ namespace Archivio.ViewModels
             }
             catch (Exception ex)
             {
-                _setError($"画像の追加に失敗しました: {ex.Message}", ex, file.Path);
+                _setError(LanguageManager.GetString("Msg_AddImageFailed", ex.Message), ex, file.Path);
             }
         }
 
@@ -563,7 +563,7 @@ namespace Archivio.ViewModels
             }
             catch (Exception ex)
             {
-                _setError($"画像の差し替えに失敗しました: {ex.Message}", ex, file.Path);
+                _setError(LanguageManager.GetString("Msg_ReplaceImageFailed", ex.Message), ex, file.Path);
             }
         }
 

@@ -93,7 +93,23 @@ namespace Archivio.Models
 
         public string DisplayTitle => string.IsNullOrWhiteSpace(Title) ? FileName : Title;
 
-        public string DisplayParticipants => string.IsNullOrWhiteSpace(Participants) ? "ー" : Participants;
+        public string DisplayParticipants => string.IsNullOrWhiteSpace(Participants)
+            ? LanguageManager.GetString("Placeholder_None")
+            : Participants;
+
+        public string ThumbnailLoadingText => LanguageManager.GetString("Thumbnail_Loading");
+
+        public string ThumbnailEmptyText => LanguageManager.GetString("Thumbnail_Empty");
+
+        public string ThumbnailFailedText => LanguageManager.GetString("Thumbnail_Failed");
+
+        public void RefreshLocalizedText()
+        {
+            OnPropertyChanged(nameof(DisplayParticipants));
+            OnPropertyChanged(nameof(ThumbnailLoadingText));
+            OnPropertyChanged(nameof(ThumbnailEmptyText));
+            OnPropertyChanged(nameof(ThumbnailFailedText));
+        }
 
         public string FullPath
         {

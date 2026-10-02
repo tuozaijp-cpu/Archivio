@@ -15,8 +15,8 @@
         <LangVersion>latest</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>Archivio</RootNamespace>
-        <Version>1.3.0</Version>
-        <ApplicationVersion>1.3.0.0</ApplicationVersion>
+        <Version>1.3.1</Version>
+        <ApplicationVersion>1.3.1.0</ApplicationVersion>
 
         <!-- App Options -->
         <UseRidGraph>true</UseRidGraph>

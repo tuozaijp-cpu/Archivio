@@ -24,11 +24,11 @@
                                 <Button.Flyout>
                                     <Flyout Opening="FilterFlyout_Opening">
                                         <StackPanel Width="220" Spacing="8">
-                                            <TextBlock Text="表示する項目を選択:" FontWeight="SemiBold" />
-                                            <TextBox x:Name="SearchValuesTextBox" PlaceholderText="選択肢を検索..." TextChanged="SearchValuesTextBox_TextChanged" />
+                                            <TextBlock Text="" FontWeight="SemiBold" />
+                                            <TextBox x:Name="SearchValuesTextBox" PlaceholderText="" TextChanged="SearchValuesTextBox_TextChanged" />
                                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <Button Content="すべて選択" Click="SelectAllValues_Click" Width="100"/>
-                                                <Button Content="すべて解除" Click="ClearAllValues_Click" Width="100"/>
+                                                <Button Content="" Click="SelectAllValues_Click" Width="100"/>
+                                                <Button Content="" Click="ClearAllValues_Click" Width="100"/>
                                             </StackPanel>
                                             <ScrollViewer MaxHeight="180">
                                                 <ItemsControl x:Name="ValuesItemsControl">
@@ -40,8 +40,8 @@
                                                 </ItemsControl>
                                             </ScrollViewer>
                                             <Grid ColumnDefinitions="*, *">
-                                                <Button Content="適用" Click="ApplyFilter_Click" HorizontalAlignment="Stretch" Margin="0,0,4,0"/>
-                                                <Button Grid.Column="1" Content="クリア" Click="ClearFilter_Click" HorizontalAlignment="Stretch" Margin="4,0,0,0"/>
+                                                <Button Content="" Click="ApplyFilter_Click" HorizontalAlignment="Stretch" Margin="0,0,4,0"/>
+                                                <Button Grid.Column="1" Content="" Click="ClearFilter_Click" HorizontalAlignment="Stretch" Margin="4,0,0,0"/>
                                             </Grid>
                                         </StackPanel>
                                     </Flyout>
@@ -70,33 +70,34 @@
                 <Button
                     x:Name="ChooseFolderButton"
                     Click="ChooseFolderButton_Click"
-                    Content="フォルダを選択" />
+                    Content="" />
                 <Button
                     x:Name="RefreshButton"
                     Click="RefreshButton_Click"
-                    Content="再読み込み" />
+                    Content="" />
                 <ToggleSwitch
                     x:Name="SubfoldersToggle"
-                    AutomationProperties.Name="サブフォルダーも検索"
+                    AutomationProperties.Name=""
                     IsOn="{x:Bind ViewModel.IncludeSubfolders, Mode=TwoWay}"
-                    ToolTipService.ToolTip="サブフォルダーも検索"
+                    ToolTipService.ToolTip=""
                     OnContent=""
                     OffContent="" />
                 <TextBox
+                    x:Name="SearchTextBox"
                     Width="420"
-                    PlaceholderText="タイトル、出演者、ファイル名などを検索"
+                    PlaceholderText=""
                     Text="{x:Bind ViewModel.FilterText, Mode=TwoWay}"
                     TextChanged="FilterTextBox_TextChanged"
-                    ToolTipService.ToolTip="タイトル、出演者、ファイル名などから動画を検索" />
+                    ToolTipService.ToolTip="" />
                 <Button
                     x:Name="ExportCsvButton"
                     Click="ExportCsvButton_Click"
-                    Content="一覧をCSV保存"
+                    Content=""
                     IsEnabled="{x:Bind ViewModel.CanExportCsv, Mode=OneWay}" />
                 <Button
                     x:Name="CancelRefreshButton"
                     Click="CancelRefreshButton_Click"
-                    Content="中止"
+                    Content=""
                     IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
             </StackPanel>
 
@@ -118,21 +119,21 @@
                     x:Name="DetailViewToggleButton"
                     IsChecked="{x:Bind ViewModel.IsDetailView, Mode=OneWay}"
                     Click="DetailViewToggleButton_Click"
-                    Content="詳細" />
+                    Content="" />
                 <ToggleButton
                     x:Name="ThumbnailViewToggleButton"
                     IsChecked="{x:Bind ViewModel.IsThumbnailView, Mode=OneWay}"
                     Click="ThumbnailViewToggleButton_Click"
-                    Content="タイル" />
+                    Content="" />
                 <ComboBox
                     x:Name="ThumbnailTileSizeComboBox"
                     Width="100"
                     SelectedIndex="{x:Bind ViewModel.ThumbnailTileSizeIndex, Mode=TwoWay}"
-                    ToolTipService.ToolTip="タイルサイズ">
-                    <ComboBoxItem Content="小" />
-                    <ComboBoxItem Content="標準" />
-                    <ComboBoxItem Content="大" />
-                    <ComboBoxItem Content="特大" />
+                    ToolTipService.ToolTip="">
+                    <ComboBoxItem Content="" />
+                    <ComboBoxItem Content="" />
+                    <ComboBoxItem Content="" />
+                    <ComboBoxItem Content="" />
                 </ComboBox>
             </StackPanel>
         </Grid>
@@ -150,7 +151,7 @@
                 Margin="0,0,0,8"
                 FontSize="18"
                 FontWeight="SemiBold"
-                Text="動画一覧" />
+                Text="" />
 
             <Border
                 Grid.Row="1"
@@ -174,39 +175,39 @@
                     Visibility="{x:Bind ViewModel.DetailViewVisibility, Mode=OneWay}">
                     <controls:DataGrid.ContextFlyout>
                         <MenuFlyout>
-                            <MenuFlyoutItem x:Name="RenameMenuItem" Text="ファイル名の変更" Click="RenameMenuItem_Click" />
-                            <MenuFlyoutItem x:Name="DeleteMenuItem" Text="ファイルの削除" Click="DeleteMenuItem_Click" />
-                            <MenuFlyoutItem x:Name="ReMuxMenuItem" Text="Ffmpegでの再MUX" Click="ReMuxMenuItem_Click" />
+                            <MenuFlyoutItem x:Name="RenameMenuItem" Text="" Click="RenameMenuItem_Click" />
+                            <MenuFlyoutItem x:Name="DeleteMenuItem" Text="" Click="DeleteMenuItem_Click" />
+                            <MenuFlyoutItem x:Name="ReMuxMenuItem" Text="" Click="ReMuxMenuItem_Click" />
                             <MenuFlyoutSeparator />
-                            <MenuFlyoutItem x:Name="ClearCacheMenuItem" Text="キャッシュをクリア" Click="ClearCacheMenuItem_Click" />
-                            <MenuFlyoutSubItem x:Name="LanguageMenu" Text="表示言語 / Language" />
+                            <MenuFlyoutItem x:Name="ClearCacheMenuItem" Text="" Click="ClearCacheMenuItem_Click" />
+                            <MenuFlyoutSubItem x:Name="LanguageMenu" Text="" />
                             <MenuFlyoutSeparator />
-                            <MenuFlyoutItem x:Name="ReadmeMenuItem" Text="READMEを表示" Click="ReadmeMenuItem_Click" />
-                            <MenuFlyoutItem x:Name="AboutMenuItem" Text="Archivioについて" Click="AboutMenuItem_Click" />
+                            <MenuFlyoutItem x:Name="ReadmeMenuItem" Text="" Click="ReadmeMenuItem_Click" />
+                            <MenuFlyoutItem x:Name="AboutMenuItem" Text="" Click="AboutMenuItem_Click" />
                         </MenuFlyout>
                     </controls:DataGrid.ContextFlyout>
                     <controls:DataGrid.Columns>
-                        <controls:DataGridTextColumn Binding="{Binding StatusText}" Header="状態" IsReadOnly="True" Width="80" Tag="StatusText" />
-                        <controls:DataGridTextColumn Binding="{Binding FileName, Mode=TwoWay}" Header="ファイル名" IsReadOnly="True" Width="220" Tag="FileName" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding FileSizeText}" Header="サイズ" IsReadOnly="True" Width="90" Tag="FileSizeText" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Title}" Header="タイトル" IsReadOnly="True" Width="180" Tag="Title" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Participants}" Header="出演者" IsReadOnly="True" Width="180" Tag="Participants" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding ReleaseDateText}" Header="発売日" IsReadOnly="True" Width="120" Tag="ReleaseDateText" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding CatalogNumber}" Header="品番" IsReadOnly="True" Width="140" Tag="CatalogNumber" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding RatingStarsText}" Header="評価" IsReadOnly="True" Width="120" Tag="Rating" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Publisher}" Header="発行元" IsReadOnly="True" Width="140" Tag="Publisher" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding ContentDistributor}" Header="レーベル" IsReadOnly="True" Width="140" Tag="ContentDistributor" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Category}" Header="カテゴリ" IsReadOnly="True" Width="120" Tag="Category" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Comment}" Header="コメント" IsReadOnly="True" Width="220" Tag="Comment" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Duration}" Header="再生時間" IsReadOnly="True" Width="100" Tag="Duration" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding FrameWidth}" Header="フレーム幅" IsReadOnly="True" Width="90" Tag="FrameWidth" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding FrameHeight}" Header="フレーム高さ" IsReadOnly="True" Width="90" Tag="FrameHeight" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding FrameRate}" Header="フレームレート" IsReadOnly="True" Width="90" Tag="FrameRate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding VideoBitrate}" Header="映像ビットレート" IsReadOnly="True" Width="110" Tag="VideoBitrate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding VideoCompression}" Header="圧縮方式" IsReadOnly="True" Width="120" Tag="VideoCompression" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding AudioSampleRate}" Header="サンプルレート" IsReadOnly="True" Width="110" Tag="AudioSampleRate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding AudioBitrate}" Header="音声ビットレート" IsReadOnly="True" Width="110" Tag="AudioBitrate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding AudioFormat}" Header="音声形式" IsReadOnly="True" Width="110" Tag="AudioFormat" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding StatusText}" IsReadOnly="True" Width="80" Tag="StatusText" />
+                        <controls:DataGridTextColumn Binding="{Binding FileName, Mode=TwoWay}" IsReadOnly="True" Width="220" Tag="FileName" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding FileSizeText}" IsReadOnly="True" Width="90" Tag="FileSizeText" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding Title}" IsReadOnly="True" Width="180" Tag="Title" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding Participants}" IsReadOnly="True" Width="180" Tag="Participants" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding ReleaseDateText}" IsReadOnly="True" Width="120" Tag="ReleaseDateText" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding CatalogNumber}" IsReadOnly="True" Width="140" Tag="CatalogNumber" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding RatingStarsText}" IsReadOnly="True" Width="120" Tag="Rating" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding Publisher}" IsReadOnly="True" Width="140" Tag="Publisher" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding ContentDistributor}" IsReadOnly="True" Width="140" Tag="ContentDistributor" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding Category}" IsReadOnly="True" Width="120" Tag="Category" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding Comment}" IsReadOnly="True" Width="220" Tag="Comment" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding Duration}" IsReadOnly="True" Width="100" Tag="Duration" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding FrameWidth}" IsReadOnly="True" Width="90" Tag="FrameWidth" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding FrameHeight}" IsReadOnly="True" Width="90" Tag="FrameHeight" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding FrameRate}" IsReadOnly="True" Width="90" Tag="FrameRate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding VideoBitrate}" IsReadOnly="True" Width="110" Tag="VideoBitrate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding VideoCompression}" IsReadOnly="True" Width="120" Tag="VideoCompression" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding AudioSampleRate}" IsReadOnly="True" Width="110" Tag="AudioSampleRate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding AudioBitrate}" IsReadOnly="True" Width="110" Tag="AudioBitrate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
+                        <controls:DataGridTextColumn Binding="{Binding AudioFormat}" IsReadOnly="True" Width="110" Tag="AudioFormat" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
                     </controls:DataGrid.Columns>
                     </controls:DataGrid>
 
@@ -220,7 +221,7 @@
                     DoubleTapped="DataGrid_DoubleTapped"
                     ContextRequested="VideoThumbnailGridView_ContextRequested"
                     IsTabStop="True"
-                    AutomationProperties.Name="動画一覧（サムネイル）"
+                    AutomationProperties.Name=""
                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                     ScrollViewer.VerticalScrollBarVisibility="Auto"
                     Visibility="{x:Bind ViewModel.ThumbnailViewVisibility, Mode=OneWay}">
@@ -244,15 +245,15 @@
                                         <Image Source="{Binding ThumbnailImage}" Stretch="Uniform" />
                                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="{Binding ThumbnailLoadingVisibility}">
                                             <ProgressRing IsActive="True" Width="36" Height="36" />
-                                            <TextBlock Text="読み込み中..." Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="{Binding ThumbnailLoadingText}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         </StackPanel>
                                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="{Binding ThumbnailEmptyVisibility}">
                                             <FontIcon Glyph="&#xEB9F;" FontSize="36" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <TextBlock Text="カバーアートなし" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="{Binding ThumbnailEmptyText}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         </StackPanel>
                                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="{Binding ThumbnailErrorVisibility}">
                                             <FontIcon Glyph="&#xE783;" FontSize="36" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <TextBlock Text="読み込み失敗" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="{Binding ThumbnailFailedText}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         </StackPanel>
                                     </Grid>
                                 </Border>
@@ -292,7 +293,7 @@
                 Margin="0,0,0,8"
                 FontSize="18"
                 FontWeight="SemiBold"
-                Text="詳細情報" />
+                Text="" />
 
             <Grid Grid.Row="1" Visibility="{x:Bind ViewModel.DetailedPanelVisibility, Mode=OneWay}">
                 <Grid.ColumnDefinitions>
@@ -347,7 +348,7 @@
                                 <TextBlock
                                     x:Name="NoCoverArtText"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="カバーアートはありません" />
+                                Text="" />
                             </StackPanel>
                             </Grid>
 
@@ -366,32 +367,32 @@
                         Spacing="12">
                         <ToggleButton
                             x:Name="VideoPlaybackToggleButton"
-                            Content="再生"
+                            Content=""
                             IsChecked="False"
                             Click="VideoPlaybackToggleButton_Click" />
                         <ToggleButton
                             x:Name="CoverArtViewToggleButton"
-                            Content="画像"
+                            Content=""
                             IsChecked="True"
                             Click="CoverArtViewToggleButton_Click" />
                         <Button
                             x:Name="AddImageButton"
-                            Content="画像追加"
+                            Content=""
                             Click="AddImageButton_Click"
                             IsEnabled="{x:Bind ViewModel.IsVideoSelected, Mode=OneWay}" />
                         <Button
                             x:Name="ReplaceImageButton"
-                            Content="画像変更"
+                            Content=""
                             Click="ReplaceImageButton_Click"
                             IsEnabled="{x:Bind ViewModel.SelectedVideo.IsImageControlsEnabled, Mode=OneWay}" />
                         <Button
                             x:Name="DeleteImageButton"
-                            Content="画像削除"
+                            Content=""
                             Click="DeleteImageButton_Click"
                             IsEnabled="{x:Bind ViewModel.SelectedVideo.IsImageControlsEnabled, Mode=OneWay}" />
                         <Button
                             x:Name="SaveImageButton"
-                            Content="画像保存"
+                            Content=""
                             Click="SaveImageButton_Click"
                             IsEnabled="{x:Bind ViewModel.SelectedVideo.HasCoverArtChangesNotify, Mode=OneWay}" />
                     </StackPanel>
@@ -416,53 +417,53 @@
                     <StackPanel Spacing="12" Padding="0,0,12,0">
                         <TextBox
                             x:Name="TitleTextBox"
-                            Header="タイトル"
+                            Header=""
                             Text="{x:Bind ViewModel.SelectedVideo.Title, Mode=TwoWay}" />
                         <TextBox
                             x:Name="ParticipantsTextBox"
-                            Header="出演者"
+                            Header=""
                             Text="{x:Bind ViewModel.SelectedVideo.Participants, Mode=TwoWay}" />
                         <DatePicker
                             x:Name="ReleaseDatePicker"
-                            Header="発売日"
+                            Header=""
                             Date="{x:Bind ViewModel.SelectedVideo.ReleaseDate, Mode=OneWay}"
                             DateChanged="ReleaseDatePicker_DateChanged" />
                         <TextBox
                             x:Name="CatalogNumberTextBox"
-                            Header="品番"
+                            Header=""
                             Text="{x:Bind ViewModel.SelectedVideo.CatalogNumber, Mode=TwoWay}" />
                         <ComboBox
                             x:Name="RatingComboBox"
-                            Header="評価"
+                            Header=""
                             HorizontalAlignment="Stretch"
                             SelectedIndex="{x:Bind ViewModel.SelectedVideo.RatingStarsIndex, Mode=TwoWay}">
-                            <ComboBoxItem Content="☆☆☆☆☆ (未評価)" />
-                            <ComboBoxItem Content="★☆☆☆☆ (1星)" />
-                            <ComboBoxItem Content="★★☆☆☆ (2星)" />
-                            <ComboBoxItem Content="★★★☆☆ (3星)" />
-                            <ComboBoxItem Content="★★★★☆ (4星)" />
-                            <ComboBoxItem Content="★★★★★ (5星)" />
+                            <ComboBoxItem Content="" />
+                            <ComboBoxItem Content="" />
+                            <ComboBoxItem Content="" />
+                            <ComboBoxItem Content="" />
+                            <ComboBoxItem Content="" />
+                            <ComboBoxItem Content="" />
                         </ComboBox>
                         <TextBox
                             x:Name="PublisherTextBox"
-                            Header="発行元"
+                            Header=""
                             Text="{x:Bind ViewModel.SelectedVideo.Publisher, Mode=TwoWay}" />
                         <TextBox
                             x:Name="ContentDistributorTextBox"
-                            Header="レーベル"
+                            Header=""
                             Text="{x:Bind ViewModel.SelectedVideo.ContentDistributor, Mode=TwoWay}" />
                         <TextBox
                             x:Name="CategoryTextBox"
-                            Header="カテゴリ"
+                            Header=""
                             Text="{x:Bind ViewModel.SelectedVideo.Category, Mode=TwoWay}" />
                         <TextBox
                             x:Name="CommentTextBox"
-                            Header="コメント"
+                            Header=""
                             Text="{x:Bind ViewModel.SelectedVideo.Comment, Mode=TwoWay}" />
                         <Button
                             x:Name="SaveMetadataButton"
                             HorizontalAlignment="Left"
-                            Content="保存"
+                            Content=""
                             Click="OnSaveClicked"
                             IsEnabled="{x:Bind ViewModel.SelectedVideo.HasMetadataChangesNotify, Mode=OneWay}" />
                     </StackPanel>
@@ -487,47 +488,47 @@
                     <StackPanel Spacing="12" Padding="0,0,12,0">
                         <TextBox
                             x:Name="DurationTextBox"
-                            Header="再生時間"
+                            Header=""
                             IsReadOnly="True"
                             Text="{x:Bind ViewModel.SelectedVideo.Duration, Mode=OneWay}" />
                         <TextBox
                             x:Name="FrameWidthTextBox"
-                            Header="フレーム幅"
+                            Header=""
                             IsReadOnly="True"
                             Text="{x:Bind ViewModel.SelectedVideo.FrameWidth, Mode=OneWay}" />
                         <TextBox
                             x:Name="FrameHeightTextBox"
-                            Header="フレーム高さ"
+                            Header=""
                             IsReadOnly="True"
                             Text="{x:Bind ViewModel.SelectedVideo.FrameHeight, Mode=OneWay}" />
                         <TextBox
                             x:Name="FrameRateTextBox"
-                            Header="フレームレート"
+                            Header=""
                             IsReadOnly="True"
                             Text="{x:Bind ViewModel.SelectedVideo.FrameRate, Mode=OneWay}" />
                         <TextBox
                             x:Name="VideoBitrateTextBox"
-                            Header="映像ビットレート"
+                            Header=""
                             IsReadOnly="True"
                             Text="{x:Bind ViewModel.SelectedVideo.VideoBitrate, Mode=OneWay}" />
                         <TextBox
                             x:Name="VideoCompressionTextBox"
-                            Header="圧縮方式"
+                            Header=""
                             IsReadOnly="True"
                             Text="{x:Bind ViewModel.SelectedVideo.VideoCompression, Mode=OneWay}" />
                         <TextBox
                             x:Name="AudioSampleRateTextBox"
-                            Header="サンプルレート"
+                            Header=""
                             IsReadOnly="True"
                             Text="{x:Bind ViewModel.SelectedVideo.AudioSampleRate, Mode=OneWay}" />
                         <TextBox
                             x:Name="AudioBitrateTextBox"
-                            Header="音声ビットレート"
+                            Header=""
                             IsReadOnly="True"
                             Text="{x:Bind ViewModel.SelectedVideo.AudioBitrate, Mode=OneWay}" />
                         <TextBox
                             x:Name="AudioFormatTextBox"
-                            Header="音声形式"
+                            Header=""
                             IsReadOnly="True"
                             Text="{x:Bind ViewModel.SelectedVideo.AudioFormat, Mode=OneWay}" />
                     </StackPanel>

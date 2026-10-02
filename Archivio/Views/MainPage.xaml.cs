@@ -46,12 +46,28 @@ namespace Archivio.Views
                 VideoListHeader.Text = LanguageManager.GetString("VideoList_Title");
                 DetailsHeader.Text = LanguageManager.GetString("VideoDetails_Title");
                 NoCoverArtText.Text = LanguageManager.GetString("Placeholder_NoCoverArt");
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+                    VideoThumbnailGridView,
+                    LanguageManager.GetString("ThumbnailList_Name"));
 
                 // Buttons
                 ChooseFolderButton.Content = LanguageManager.GetString("Button_ChooseFolder");
                 RefreshButton.Content = LanguageManager.GetString("Button_Refresh");
                 ExportCsvButton.Content = LanguageManager.GetString("Button_ExportCsv");
                 CancelRefreshButton.Content = LanguageManager.GetString("Button_Cancel");
+                DetailViewToggleButton.Content = LanguageManager.GetString("Button_DetailView");
+                ThumbnailViewToggleButton.Content = LanguageManager.GetString("Button_ThumbnailView");
+                ToolTipService.SetToolTip(ThumbnailTileSizeComboBox, LanguageManager.GetString("ThumbnailTileSize"));
+                SearchTextBox.PlaceholderText = LanguageManager.GetString("Search_Placeholder");
+                ToolTipService.SetToolTip(SearchTextBox, LanguageManager.GetString("Search_Tooltip"));
+
+                if (ThumbnailTileSizeComboBox.Items.Count >= 4)
+                {
+                    ((ComboBoxItem)ThumbnailTileSizeComboBox.Items[0]).Content = LanguageManager.GetString("ThumbnailSize_Small");
+                    ((ComboBoxItem)ThumbnailTileSizeComboBox.Items[1]).Content = LanguageManager.GetString("ThumbnailSize_Standard");
+                    ((ComboBoxItem)ThumbnailTileSizeComboBox.Items[2]).Content = LanguageManager.GetString("ThumbnailSize_Large");
+                    ((ComboBoxItem)ThumbnailTileSizeComboBox.Items[3]).Content = LanguageManager.GetString("ThumbnailSize_ExtraLarge");
+                }
 
                 AddImageButton.Content = LanguageManager.GetString("Button_AddImage");
                 ReplaceImageButton.Content = LanguageManager.GetString("Button_ReplaceImage");
@@ -114,6 +130,11 @@ namespace Archivio.Views
                         column.Header = LanguageManager.GetString($"Col_{tag}");
                     }
                 }
+
+                if (_activeFlyout?.Content is StackPanel filterPanel)
+                {
+                    LocalizeFilterFlyout(filterPanel);
+                }
             }
             catch (Exception ex)
             {
@@ -173,6 +194,7 @@ namespace Archivio.Views
 
                 ApplyLocalization();
                 InitializeLanguageMenu();
+                ViewModel.RefreshLocalizedText();
 
                 // Refresh videos list so column contents and statuses refresh
                 _ = ViewModel.RefreshFilesAsync();
@@ -476,7 +498,7 @@ namespace Archivio.Views
             catch (Exception ex)
             {
                 AppLogger.Error("動画の再生準備に失敗しました", ex, ViewModel.SelectedVideo?.FullPath);
-                ViewModel.SetPlaybackError("動画を再生できませんでした。");
+                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_VideoPlaybackFailed"));
             }
         }
 
@@ -931,7 +953,7 @@ namespace Archivio.Views
             
             stackPanel.Children.Add(new TextBlock 
             { 
-                Text = "Archivio (アルキーヴィオ)", 
+                Text = LanguageManager.GetString("Dialog_About_AppTitle"),
                 FontSize = 18, 
                 FontWeight = Microsoft.UI.Text.FontWeights.Bold 
             });
@@ -951,7 +973,7 @@ namespace Archivio.Views
 
             stackPanel.Children.Add(new TextBlock
             {
-                Text = "Archivioは無料で利用できます。もしArchivioがお役に立ちましたら今後の開発を応援していただけると嬉しいです。",
+                Text = LanguageManager.GetString("Dialog_About_SupportMessage"),
                 TextWrapping = TextWrapping.WrapWholeWords,
                 FontSize = 13
             });
@@ -966,7 +988,11 @@ namespace Archivio.Views
             stackPanel.Children.Add(supportLink);
 
             var linkPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            linkPanel.Children.Add(new TextBlock { Text = "GitHub:", VerticalAlignment = VerticalAlignment.Center });
+            linkPanel.Children.Add(new TextBlock
+            {
+                Text = LanguageManager.GetString("Dialog_About_GitHubLabel"),
+                VerticalAlignment = VerticalAlignment.Center
+            });
             
             var hyperlink = new HyperlinkButton
             {
@@ -992,7 +1018,7 @@ namespace Archivio.Views
 
         private static string GetApplicationVersion()
         {
-            return typeof(App).Assembly.GetName().Version?.ToString(3) ?? "不明";
+            return typeof(App).Assembly.GetName().Version?.ToString(3) ?? LanguageManager.GetString("Value_Unknown");
         }
 
         private async void ReadmeMenuItem_Click(object sender, RoutedEventArgs e)
