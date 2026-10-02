@@ -57,6 +57,8 @@ namespace Archivio.Views
                 CancelRefreshButton.Content = LanguageManager.GetString("Button_Cancel");
                 DetailViewToggleButton.Content = LanguageManager.GetString("Button_DetailView");
                 ThumbnailViewToggleButton.Content = LanguageManager.GetString("Button_ThumbnailView");
+                VideoPlaybackToggleButton.Content = LanguageManager.GetString("Button_Play");
+                CoverArtViewToggleButton.Content = LanguageManager.GetString("Button_CoverArtView");
                 ToolTipService.SetToolTip(ThumbnailTileSizeComboBox, LanguageManager.GetString("ThumbnailTileSize"));
                 SearchTextBox.PlaceholderText = LanguageManager.GetString("Search_Placeholder");
                 ToolTipService.SetToolTip(SearchTextBox, LanguageManager.GetString("Search_Tooltip"));
