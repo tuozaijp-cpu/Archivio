@@ -5,10 +5,12 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.Graphics.Imaging;
 using Microsoft.WindowsAPICodePack.Shell;
 using Microsoft.WindowsAPICodePack.Shell.PropertySystem;
 using TagLib;
 using Windows.Storage;
+using Windows.Storage.Streams;
 
 namespace Archivio.ViewModels
 {
@@ -459,7 +461,7 @@ namespace Archivio.ViewModels
         /// </summary>
         public async Task<CoverArtImageData?> LoadThumbnailImageAsync(StorageFile file, CancellationToken cancellationToken = default)
         {
-            return await Task.Run(() =>
+            return await Task.Run(async () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -472,10 +474,16 @@ namespace Archivio.ViewModels
                         continue;
                     }
 
+                    var mimeType = picture.MimeType ?? "image/jpeg";
+                    var (thumbnailData, thumbnailMimeType) = await ResizeThumbnailImageAsync(
+                        picture.Data.Data,
+                        mimeType,
+                        cancellationToken);
+
                     return new CoverArtImageData
                     {
-                        Data = picture.Data.Data,
-                        MimeType = picture.MimeType ?? "image/jpeg",
+                        Data = thumbnailData,
+                        MimeType = thumbnailMimeType,
                         Description = picture.Description ?? string.Empty,
                         Type = picture.Type
                     };
@@ -483,6 +491,81 @@ namespace Archivio.ViewModels
 
                 return null;
             }, cancellationToken);
+        }
+
+        private static async Task<(byte[] Data, string MimeType)> ResizeThumbnailImageAsync(
+            byte[] imageData,
+            string mimeType,
+            CancellationToken cancellationToken)
+        {
+            const uint maxWidth = 360;
+            const uint maxHeight = 320;
+
+            try
+            {
+                using var inputStream = new InMemoryRandomAccessStream();
+                using (var writer = new DataWriter(inputStream.GetOutputStreamAt(0)))
+                {
+                    writer.WriteBytes(imageData);
+                    await writer.StoreAsync();
+                    await writer.FlushAsync();
+                }
+
+                inputStream.Seek(0);
+                var decoder = await BitmapDecoder.CreateAsync(inputStream);
+                var sourceWidth = decoder.OrientedPixelWidth;
+                var sourceHeight = decoder.OrientedPixelHeight;
+                if (sourceWidth == 0 || sourceHeight == 0 || (sourceWidth <= maxWidth && sourceHeight <= maxHeight))
+                {
+                    return (imageData, mimeType);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var scale = Math.Min((double)maxWidth / sourceWidth, (double)maxHeight / sourceHeight);
+                var scaledWidth = (uint)Math.Max(1, (int)Math.Round(sourceWidth * scale));
+                var scaledHeight = (uint)Math.Max(1, (int)Math.Round(sourceHeight * scale));
+                var transform = new BitmapTransform
+                {
+                    ScaledWidth = scaledWidth,
+                    ScaledHeight = scaledHeight,
+                    InterpolationMode = BitmapInterpolationMode.Fant
+                };
+                var pixelData = await decoder.GetPixelDataAsync(
+                    BitmapPixelFormat.Bgra8,
+                    BitmapAlphaMode.Premultiplied,
+                    transform,
+                    ExifOrientationMode.RespectExifOrientation,
+                    ColorManagementMode.DoNotColorManage);
+
+                using var outputStream = new InMemoryRandomAccessStream();
+                var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, outputStream);
+                encoder.SetPixelData(
+                    BitmapPixelFormat.Bgra8,
+                    BitmapAlphaMode.Premultiplied,
+                    scaledWidth,
+                    scaledHeight,
+                    decoder.DpiX,
+                    decoder.DpiY,
+                    pixelData.DetachPixelData());
+                await encoder.FlushAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+
+                outputStream.Seek(0);
+                var thumbnailData = new byte[(int)outputStream.Size];
+                using var reader = new DataReader(outputStream.GetInputStreamAt(0));
+                await reader.LoadAsync((uint)thumbnailData.Length);
+                reader.ReadBytes(thumbnailData);
+                return (thumbnailData, "image/png");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("一覧用サムネイルの縮小に失敗しました", ex);
+                return (imageData, mimeType);
+            }
         }
 
         public async Task<VideoMetadataOperationResult> SaveCoverArtAsync(StorageFile file, IEnumerable<CoverArtImageData> coverArtImages)

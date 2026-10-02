@@ -77,6 +77,7 @@ namespace Archivio
                         currentSettings.IncludeSubfolders = page.ViewModel.IncludeSubfolders;
                         currentSettings.IsThumbnailView = page.ViewModel.IsThumbnailView;
                         currentSettings.ThumbnailTileSizeIndex = page.ViewModel.ThumbnailTileSizeIndex;
+                        currentSettings.LastFolderPath = page.ViewModel.FolderPath;
                         page.SaveLayoutSettings(currentSettings);
                     }
 

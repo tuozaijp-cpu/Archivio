@@ -28,41 +28,52 @@ namespace Archivio.ViewModels
         private bool _cachedIncludeSubfolders = false;
         private IReadOnlyList<string>? _cachedPathList;
 
-        public Task<IReadOnlyList<string>> EnumerateVideoFilePathsAsync(StorageFolder folder, bool includeSubfolders, CancellationToken cancellationToken)
+        public async Task<IReadOnlyList<string>> EnumerateVideoFilePathsAsync(StorageFolder folder, bool includeSubfolders, CancellationToken cancellationToken)
         {
             // キャッシュが有効ならそれを返す
             if (_cachedPathList != null && _cachedFolderPath == folder.Path && _cachedIncludeSubfolders == includeSubfolders)
             {
-                return Task.FromResult(_cachedPathList);
+                return _cachedPathList;
             }
 
-            var result = new List<string>();
-            try
+            var result = await Task.Run<IReadOnlyList<string>>(() =>
             {
-                var enumerationOption = includeSubfolders
-                    ? System.IO.SearchOption.AllDirectories
-                    : System.IO.SearchOption.TopDirectoryOnly;
-
-                foreach (var path in Directory.EnumerateFiles(folder.Path, "*", enumerationOption))
+                var paths = new List<string>();
+                var options = new EnumerationOptions
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (SupportedVideoExtensions.Contains(Path.GetExtension(path)))
+                    RecurseSubdirectories = includeSubfolders,
+                    IgnoreInaccessible = true,
+                    AttributesToSkip = 0
+                };
+
+                try
+                {
+                    foreach (var path in Directory.EnumerateFiles(folder.Path, "*", options))
                     {
-                        result.Add(path);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (SupportedVideoExtensions.Contains(Path.GetExtension(path)))
+                        {
+                            paths.Add(path);
+                        }
                     }
                 }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                AppLogger.Error("動画フォルダーの列挙に失敗しました", ex, folder.Path);
-            }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("動画フォルダーの列挙に失敗しました", ex, folder.Path);
+                }
+
+                return paths;
+            }, cancellationToken);
 
             // 既存のStorageFileキャッシュは使用せず、パスだけをキャッシュする。
             _cachedFolderPath = folder.Path;
             _cachedIncludeSubfolders = includeSubfolders;
             _cachedPathList = result;
-            return Task.FromResult<IReadOnlyList<string>>(result);
+            return result;
         }
 
         public async Task<ulong> GetFileSizeAsync(StorageFile file)

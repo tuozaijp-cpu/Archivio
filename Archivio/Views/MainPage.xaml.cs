@@ -30,7 +30,6 @@ namespace Archivio.Views
             this.InitializeComponent();
             DataContext = new MainPageViewModel();
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
-            Loaded += MainPage_Loaded;
             Unloaded += MainPage_Unloaded;
             VideoThumbnailGridView.ContextFlyout = VideoListDataGrid.ContextFlyout;
             ReleaseDatePicker.MinYear = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
@@ -212,7 +211,7 @@ namespace Archivio.Views
                     var columnsToRestore = VideoListDataGrid.Columns
                         .Select(c => new { Column = c, Tag = c.Tag as string })
                         .Where(item => !string.IsNullOrEmpty(item.Tag) && settings.ColumnOrder.Contains(item.Tag))
-                        .Select(item => new { item.Column, TargetIndex = settings.ColumnOrder.IndexOf(item.Tag) })
+                        .Select(item => new { item.Column, TargetIndex = settings.ColumnOrder.IndexOf(item.Tag!) })
                         .OrderBy(item => item.TargetIndex)
                         .ToList();
 
@@ -285,21 +284,29 @@ namespace Archivio.Views
 
         public MainPageViewModel ViewModel => (MainPageViewModel)DataContext;
 
-        private void MainPage_Loaded(object sender, RoutedEventArgs e)
-        {
-        }
-
         private void MainPage_Unloaded(object sender, RoutedEventArgs e)
         {
             _playbackLoadCts?.Cancel();
+            _playbackLoadCts?.Dispose();
+            _playbackLoadCts = null;
+            StopPlayback(removePlayer: true);
+        }
+
+        private void StopPlayback(bool removePlayer)
+        {
             _playbackPlayer?.Pause();
+
             if (_videoPlayerElement is not null)
             {
                 _videoPlayerElement.Source = null;
-                VideoPlaybackContent.Children.Clear();
             }
-            _videoPlayerElement = null;
-            _playbackPlayer = null;
+
+            if (removePlayer)
+            {
+                VideoPlaybackContent.Children.Clear();
+                _videoPlayerElement = null;
+                _playbackPlayer = null;
+            }
         }
 
         private void DetailViewToggleButton_Click(object sender, RoutedEventArgs e)
@@ -422,14 +429,7 @@ namespace Archivio.Views
 
             if (!_isPlaybackView)
             {
-                _playbackPlayer?.Pause();
-                if (_videoPlayerElement is not null)
-                {
-                    _videoPlayerElement.Source = null;
-                    VideoPlaybackContent.Children.Clear();
-                }
-                _videoPlayerElement = null;
-                _playbackPlayer = null;
+                StopPlayback(removePlayer: true);
                 return;
             }
 
@@ -938,7 +938,7 @@ namespace Archivio.Views
 
             stackPanel.Children.Add(new TextBlock 
             { 
-                Text = LanguageManager.GetString("Menu_About") + " v1.3.0",
+                Text = $"{LanguageManager.GetString("Menu_About")} v{GetApplicationVersion()}",
                 FontSize = 14 
             });
 
@@ -988,6 +988,11 @@ namespace Archivio.Views
             };
 
             await dialog.ShowAsync();
+        }
+
+        private static string GetApplicationVersion()
+        {
+            return typeof(App).Assembly.GetName().Version?.ToString(3) ?? "不明";
         }
 
         private async void ReadmeMenuItem_Click(object sender, RoutedEventArgs e)

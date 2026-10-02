@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -36,31 +37,62 @@ namespace Archivio.ViewModels
 
     public sealed class MediaProbeService : IMediaProbeService
     {
+        private readonly record struct FileVersion(long Length, DateTime LastWriteTimeUtc);
+        private sealed record ProbeCacheEntry(FileVersion Version, MediaProbeResult Result);
+
         // 0: 未確認、1: 利用可能、-1: 起動不可。FFprobe 非導入環境での失敗プロセス生成を防ぐ。
         private static int _ffprobeAvailability;
         private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(30);
-        // FFprobe 結果のメモリキャッシュ。ファイルパスをキーとして使用
-        private static readonly ConcurrentDictionary<string, MediaProbeResult> ProbeResultCache = 
+        // ファイルパスごとに、更新日時とサイズを照合して結果を再利用する。
+        private static readonly ConcurrentDictionary<string, ProbeCacheEntry> ProbeResultCache =
             new(StringComparer.OrdinalIgnoreCase);
 
         public async Task<MediaProbeResult> ProbeAsync(StorageFile file, CancellationToken cancellationToken = default)
         {
-            // キャッシュをチェック
-            if (ProbeResultCache.TryGetValue(file.Path, out var cachedResult))
+            var fileVersion = GetFileVersion(file.Path);
+            if (fileVersion is { } version
+                && ProbeResultCache.TryGetValue(file.Path, out var cachedEntry)
+                && cachedEntry.Version == version)
             {
-                return cachedResult;
+                return cachedEntry.Result;
             }
 
             var ffprobeResult = await TryProbeWithFfprobeAsync(file.Path, cancellationToken);
             if (ffprobeResult.HasValues)
             {
-                ProbeResultCache.TryAdd(file.Path, ffprobeResult);
+                CacheResultIfUnchanged(file.Path, fileVersion, ffprobeResult);
                 return ffprobeResult;
             }
 
             var windowsResult = await ProbeWithWindowsAsync(file, cancellationToken);
-            ProbeResultCache.TryAdd(file.Path, windowsResult);
+            CacheResultIfUnchanged(file.Path, fileVersion, windowsResult);
             return windowsResult;
+        }
+
+        private static FileVersion? GetFileVersion(string path)
+        {
+            try
+            {
+                var fileInfo = new FileInfo(path);
+                fileInfo.Refresh();
+                return fileInfo.Exists
+                    ? new FileVersion(fileInfo.Length, fileInfo.LastWriteTimeUtc)
+                    : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void CacheResultIfUnchanged(string path, FileVersion? originalVersion, MediaProbeResult result)
+        {
+            if (originalVersion is not { } version || GetFileVersion(path) is not { } currentVersion || currentVersion != version)
+            {
+                return;
+            }
+
+            ProbeResultCache[path] = new ProbeCacheEntry(version, result);
         }
 
         private static async Task<MediaProbeResult> TryProbeWithFfprobeAsync(string path, CancellationToken cancellationToken)

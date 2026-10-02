@@ -69,22 +69,39 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-// .NET 10.0 Desktop Runtime が物理的にディスク上に存在するか確認する関数
-// レジストリ未登録やZIP解凍配置の環境でも確実に検出可能な極めて頑強なディスクスキャンロジック
-function IsDotNet10InstalledOnDisk(): Boolean;
+// 指定した .NET 10 ランタイムをレジストリから確認する。
+function IsRuntime10Registered(RuntimeName: string): Boolean;
+var
+  Versions: TArrayOfString;
+  I: Integer;
+begin
+  Result := False;
+  if RegGetSubkeyNames(HKLM64, 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\' + RuntimeName, Versions) then
+  begin
+    for I := 0 to GetArrayLength(Versions) - 1 do
+    begin
+      if Pos('10.', Versions[I]) = 1 then
+      begin
+        Result := True;
+        Exit;
+      end;
+    end;
+  end;
+end;
+
+// レジストリに登録されないランタイムも、配置先の実体で確認する。
+function IsRuntime10OnDisk(RuntimeName: string): Boolean;
 var
   FindRec: TFindRec;
   SearchPath: string;
 begin
   Result := False;
-  // C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App\10.* を探索
-  SearchPath := ExpandConstant('{pf}\dotnet\shared\Microsoft.WindowsDesktop.App\10.*');
-  
+  SearchPath := ExpandConstant('{pf}\dotnet\shared\') + RuntimeName + '\10.*';
+
   if FindFirst(SearchPath, FindRec) then
   begin
     try
       repeat
-        // ディレクトリ属性を持っており、かつ . や .. でない有効なフォルダを見つけた場合
         if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
         begin
           if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
@@ -100,60 +117,11 @@ begin
   end;
 end;
 
-// .NET 10.0 Desktop Runtime、Core Runtime、または .NET 10.0 SDKのいずれかが
-// インストールされているかを多重にチェックする超強力な検出関数
+// アプリが要求する Core と Desktop の両ランタイムを確認する。
 function IsDotNet10Installed(): Boolean;
-var
-  Versions: TArrayOfString;
-  I: Integer;
 begin
-  Result := False;
-
-  // 1. 一般ユーザー環境用の「Windows Desktop Runtime (x64)」のレジストリチェック
-  if RegGetSubkeyNames(HKLM64, 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App', Versions) then
-  begin
-    for I := 0 to GetArrayLength(Versions) - 1 do
-    begin
-      if Pos('10.', Versions[I]) = 1 then
-      begin
-        Result := True;
-        Exit;
-      end;
-    end;
-  end;
-
-  // 2. 基本ランタイム「.NET Core Runtime (x64)」のレジストリチェック
-  if RegGetSubkeyNames(HKLM64, 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.NETCore.App', Versions) then
-  begin
-    for I := 0 to GetArrayLength(Versions) - 1 do
-    begin
-      if Pos('10.', Versions[I]) = 1 then
-      begin
-        Result := True;
-        Exit;
-      end;
-    end;
-  end;
-
-  // 3. 開発者環境用の「.NET SDK (x64)」のレジストリチェック
-  if RegGetSubkeyNames(HKLM64, 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sdk', Versions) then
-  begin
-    for I := 0 to GetArrayLength(Versions) - 1 do
-    begin
-      if Pos('10.', Versions[I]) = 1 then
-      begin
-        Result := True;
-        Exit;
-      end;
-    end;
-  end;
-
-  // 4. 【最強のフォールバック】レジストリ未登録でも、ディスク上の実体フォルダを直接スキャン！
-  if IsDotNet10InstalledOnDisk() then
-  begin
-    Result := True;
-    Exit;
-  end;
+  Result := (IsRuntime10Registered('Microsoft.NETCore.App') or IsRuntime10OnDisk('Microsoft.NETCore.App'))
+    and (IsRuntime10Registered('Microsoft.WindowsDesktop.App') or IsRuntime10OnDisk('Microsoft.WindowsDesktop.App'));
 end;
 
 // インストーラー起動時の初期化チェック処理
@@ -163,7 +131,7 @@ var
 begin
   Result := True;
   
-  // .NET 10.0 関連環境が一つも見つからない場合のみ警告する
+  // 必須ランタイムのどちらかが見つからない場合はセットアップを中断する。
   if not IsDotNet10Installed() then
   begin
     if MsgBox('Archivio の実行には「.NET 10.0 Desktop Runtime (x64)」が必要です。' + #13#10 +

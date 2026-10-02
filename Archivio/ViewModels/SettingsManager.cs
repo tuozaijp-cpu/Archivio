@@ -21,6 +21,8 @@ namespace Archivio.ViewModels
         public List<string> ColumnOrder { get; set; } = new();
         public string Language { get; set; } = string.Empty;
         public bool IncludeSubfolders { get; set; } = true;
+        /// <summary>前回開いていた動画フォルダのパス。</summary>
+        public string LastFolderPath { get; set; } = string.Empty;
         /// <summary>動画一覧をサムネイル表示するかどうか。既存設定では詳細表示になる。</summary>
         public bool IsThumbnailView { get; set; } = false;
         /// <summary>タイルサイズ。0=小、1=標準、2=大、3=特大。</summary>

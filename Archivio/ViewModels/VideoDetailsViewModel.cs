@@ -323,9 +323,9 @@ namespace Archivio.ViewModels
             {
                 var result = await SaveCoverArtAsync(targetVideo);
 
-                await LoadCoverArtAsync(targetVideo, force: true);
                 if (result.Succeeded)
                 {
+                    await LoadCoverArtAsync(targetVideo, force: true);
                     _onCoverArtSaved?.Invoke(targetVideo.FullPath);
                 }
 

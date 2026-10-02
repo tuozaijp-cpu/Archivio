@@ -46,7 +46,7 @@ namespace Archivio.ViewModels
         private readonly ConcurrentDictionary<string, ulong> _fileSizeCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, DateTimeOffset> _lastWriteTimeCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _thumbnailReadSemaphore = new(4, 4);
-        private readonly ConcurrentDictionary<string, ThumbnailCacheEntry> _thumbnailCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ThumbnailImageCache _thumbnailCache = new();
 
         private sealed class ThumbnailCacheEntry
         {
@@ -54,6 +54,101 @@ namespace Archivio.ViewModels
             public DateTimeOffset LastWriteTime { get; init; }
             public byte[] ImageData { get; init; } = Array.Empty<byte>();
             public bool LoadFailed { get; init; }
+        }
+
+        private sealed class ThumbnailImageCache
+        {
+            private const long MaxImageDataBytes = 32L * 1024 * 1024;
+            private const int MaxEntries = 256;
+            private readonly object _syncRoot = new();
+            private readonly Dictionary<string, CacheItem> _items = new(StringComparer.OrdinalIgnoreCase);
+            private readonly LinkedList<string> _leastRecentlyUsed = new();
+            private long _imageDataBytes;
+
+            private sealed class CacheItem
+            {
+                public ThumbnailCacheEntry Entry { get; init; } = new();
+                public LinkedListNode<string> Node { get; init; } = null!;
+            }
+
+            public bool TryGet(string path, out ThumbnailCacheEntry entry)
+            {
+                lock (_syncRoot)
+                {
+                    if (!_items.TryGetValue(path, out var item))
+                    {
+                        entry = null!;
+                        return false;
+                    }
+
+                    _leastRecentlyUsed.Remove(item.Node);
+                    _leastRecentlyUsed.AddLast(item.Node);
+                    entry = item.Entry;
+                    return true;
+                }
+            }
+
+            public void Set(string path, ThumbnailCacheEntry entry)
+            {
+                lock (_syncRoot)
+                {
+                    RemoveCore(path);
+                    if (entry.ImageData.LongLength > MaxImageDataBytes)
+                    {
+                        return;
+                    }
+
+                    var node = _leastRecentlyUsed.AddLast(path);
+                    _items[path] = new CacheItem { Entry = entry, Node = node };
+                    _imageDataBytes += entry.ImageData.LongLength;
+
+                    while (_items.Count > MaxEntries || _imageDataBytes > MaxImageDataBytes)
+                    {
+                        RemoveCore(_leastRecentlyUsed.First!.Value);
+                    }
+                }
+            }
+
+            public void Remove(string path)
+            {
+                lock (_syncRoot)
+                {
+                    RemoveCore(path);
+                }
+            }
+
+            public void Clear()
+            {
+                lock (_syncRoot)
+                {
+                    _items.Clear();
+                    _leastRecentlyUsed.Clear();
+                    _imageDataBytes = 0;
+                }
+            }
+
+            public void Retain(IReadOnlyCollection<string> paths)
+            {
+                var currentPaths = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+                lock (_syncRoot)
+                {
+                    foreach (var cachedPath in _items.Keys.Where(path => !currentPaths.Contains(path)).ToArray())
+                    {
+                        RemoveCore(cachedPath);
+                    }
+                }
+            }
+
+            private void RemoveCore(string path)
+            {
+                if (!_items.Remove(path, out var item))
+                {
+                    return;
+                }
+
+                _leastRecentlyUsed.Remove(item.Node);
+                _imageDataBytes -= item.Entry.ImageData.LongLength;
+            }
         }
 
         public MainPageViewModel() : this(new VideoMetadataService(), new VideoFileService())
@@ -68,6 +163,13 @@ namespace Archivio.ViewModels
             _includeSubfolders = settings.IncludeSubfolders;
             _isThumbnailView = settings.IsThumbnailView;
             _thumbnailTileSizeIndex = Math.Clamp(settings.ThumbnailTileSizeIndex, 0, 3);
+
+            // 前回のフォルダがまだ存在する場合だけ起動時に復元する。
+            // 存在しないフォルダは FolderPath に設定しないことで、未選択状態にする。
+            if (!string.IsNullOrWhiteSpace(settings.LastFolderPath) && Directory.Exists(settings.LastFolderPath))
+            {
+                FolderPath = settings.LastFolderPath;
+            }
 
             _details = new VideoDetailsViewModel(
                 _metadataService,
@@ -300,6 +402,10 @@ namespace Archivio.ViewModels
             }
 
             FolderPath = folder.Path;
+            var settings = SettingsManager.LoadSettings();
+            settings.LastFolderPath = FolderPath;
+            SettingsManager.SaveSettings(settings);
+
             Videos = new ObservableCollection<VideoFileItem>();
             SelectedVideo = null;
             await RefreshFilesAsync();
@@ -519,8 +625,8 @@ namespace Archivio.ViewModels
                             _metadataCache[newPath] = cachedMeta;
                         }
 
-                        _thumbnailCache.TryRemove(oldPath, out _);
-                        _thumbnailCache.TryRemove(newPath, out _);
+                        _thumbnailCache.Remove(oldPath);
+                        _thumbnailCache.Remove(newPath);
                         if (_fileSizeCache.TryRemove(oldPath, out _))
                         {
                             _fileSizeCache[newPath] = fileSize;
@@ -575,7 +681,7 @@ namespace Archivio.ViewModels
                 {
                     _metadataCache.TryRemove(pathToRemove, out _);
                     _fileSizeCache.TryRemove(pathToRemove, out _);
-                    _thumbnailCache.TryRemove(pathToRemove, out _);
+                    _thumbnailCache.Remove(pathToRemove);
 
                     if (!string.IsNullOrWhiteSpace(FolderPath))
                     {
@@ -622,24 +728,34 @@ namespace Archivio.ViewModels
                 var baseName = System.IO.Path.GetFileNameWithoutExtension(inputPath);
                 var ext = System.IO.Path.GetExtension(inputPath) ?? ".mp4";
                 var outPath = System.IO.Path.Combine(dir, baseName + "_ReMUX" + ext);
+                for (var suffix = 2; File.Exists(outPath) || Directory.Exists(outPath); suffix++)
+                {
+                    outPath = System.IO.Path.Combine(dir, $"{baseName}_ReMUX_{suffix}{ext}");
+                }
 
-                string movflags = "";
-                if (ext.Equals(".mp4", StringComparison.OrdinalIgnoreCase) ||
+                var supportsFastStart = ext.Equals(".mp4", StringComparison.OrdinalIgnoreCase) ||
                     ext.Equals(".m4v", StringComparison.OrdinalIgnoreCase) ||
                     ext.Equals(".mov", StringComparison.OrdinalIgnoreCase) ||
-                    ext.Equals(".3gp", StringComparison.OrdinalIgnoreCase))
-                {
-                    movflags = " -movflags +faststart";
-                }
+                    ext.Equals(".3gp", StringComparison.OrdinalIgnoreCase);
 
                 var startInfo = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = "ffmpeg",
-                    Arguments = $"-y -i \"{inputPath}\" -c copy{movflags} \"{outPath}\"",
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
+                startInfo.ArgumentList.Add("-n");
+                startInfo.ArgumentList.Add("-i");
+                startInfo.ArgumentList.Add(inputPath);
+                startInfo.ArgumentList.Add("-c");
+                startInfo.ArgumentList.Add("copy");
+                if (supportsFastStart)
+                {
+                    startInfo.ArgumentList.Add("-movflags");
+                    startInfo.ArgumentList.Add("+faststart");
+                }
+                startInfo.ArgumentList.Add(outPath);
 
                 await Task.Run(async () =>
                 {
@@ -874,19 +990,12 @@ namespace Archivio.ViewModels
 
         private void PruneThumbnailCache(IReadOnlyCollection<string> currentPaths)
         {
-            var currentPathSet = new HashSet<string>(currentPaths, StringComparer.OrdinalIgnoreCase);
-            foreach (var cachedPath in _thumbnailCache.Keys)
-            {
-                if (!currentPathSet.Contains(cachedPath))
-                {
-                    _thumbnailCache.TryRemove(cachedPath, out _);
-                }
-            }
+            _thumbnailCache.Retain(currentPaths);
         }
 
         private void OnCoverArtSaved(string path)
         {
-            _thumbnailCache.TryRemove(path, out _);
+            _thumbnailCache.Remove(path);
 
             var item = Videos.FirstOrDefault(video =>
                 string.Equals(video.FullPath, path, StringComparison.OrdinalIgnoreCase));
@@ -998,7 +1107,7 @@ namespace Archivio.ViewModels
                     return;
                 }
 
-                if (_thumbnailCache.TryGetValue(item.FullPath, out var cachedEntry)
+                if (_thumbnailCache.TryGet(item.FullPath, out var cachedEntry)
                     && IsCurrentThumbnailCacheEntry(cachedEntry, fileState))
                 {
                     if (Videos == items)
@@ -1025,7 +1134,7 @@ namespace Archivio.ViewModels
                         FileSize = fileState.FileSize,
                         LastWriteTime = fileState.LastWriteTime
                     };
-                    _thumbnailCache[item.FullPath] = emptyEntry;
+                    _thumbnailCache.Set(item.FullPath, emptyEntry);
 
                     await DispatcherHelper.RunOnUIThreadAsync(() =>
                     {
@@ -1043,7 +1152,7 @@ namespace Archivio.ViewModels
                     LastWriteTime = fileState.LastWriteTime,
                     ImageData = imageData
                 };
-                _thumbnailCache[item.FullPath] = loadedEntry;
+                _thumbnailCache.Set(item.FullPath, loadedEntry);
 
                 await ApplyThumbnailCacheEntryAsync(item, loadedEntry);
             }
@@ -1058,12 +1167,12 @@ namespace Archivio.ViewModels
                     var fileState = await Task.Run(() => GetThumbnailFileState(item.FullPath));
                     if (fileState.Exists)
                     {
-                        _thumbnailCache[item.FullPath] = new ThumbnailCacheEntry
+                        _thumbnailCache.Set(item.FullPath, new ThumbnailCacheEntry
                         {
                             FileSize = fileState.FileSize,
                             LastWriteTime = fileState.LastWriteTime,
                             LoadFailed = true
-                        };
+                        });
                     }
 
                     await DispatcherHelper.RunOnUIThreadAsync(() =>
