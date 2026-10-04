@@ -372,6 +372,7 @@ namespace Archivio.ViewModels
             if (item.HasChanges(nameof(VideoFileItem.ContentDistributor))) changedProperties.Add("ContentDistributor");
             if (item.HasChanges(nameof(VideoFileItem.Publisher))) changedProperties.Add("Publisher");
             if (item.HasChanges(nameof(VideoFileItem.ReleaseDate))) changedProperties.Add("ReleaseDate");
+            changedProperties.AddRange(item.DirtyCustomMetadataFieldIds);
 
             if (changedProperties.Count == 0)
             {
@@ -386,6 +387,11 @@ namespace Archivio.ViewModels
 
                 var file = await item.GetFileAsync();
                 var result = await _metadataService.SaveMetadataAsync(file, metadata, originalMetadata, changedProperties);
+                if (result.Succeeded && result.ReloadedMetadata is not null)
+                {
+                    MetadataDocumentMapper.ApplyToVideoFileItem(item, MetadataDocumentMapper.FromSnapshot(result.ReloadedMetadata));
+                    item.UpdateOriginalValuesFromSnapshot(result.ReloadedMetadata);
+                }
                 if (result.Succeeded)
                 {
                     try
@@ -396,8 +402,9 @@ namespace Archivio.ViewModels
                             var fileInfo = new System.IO.FileInfo(item.FullPath);
                             var fileSize = (ulong)fileInfo.Length;
                             var lastWriteTime = fileInfo.LastWriteTimeUtc;
-                            await MetadataCacheManager.UpdateEntryAsync(rootFolder, item.FullPath, lastWriteTime, fileSize, metadata);
-                            _onMetadataUpdated?.Invoke(item.FullPath, fileSize, lastWriteTime, metadata);
+                            var savedMetadata = result.ReloadedMetadata ?? metadata;
+                            await MetadataCacheManager.UpdateEntryAsync(rootFolder, item.FullPath, lastWriteTime, fileSize, savedMetadata);
+                            _onMetadataUpdated?.Invoke(item.FullPath, fileSize, lastWriteTime, savedMetadata);
                         }
                     }
                     catch (Exception ex)
@@ -429,7 +436,13 @@ namespace Archivio.ViewModels
             try
             {
                 var file = await item.GetFileAsync();
-                return await _metadataService.SaveCoverArtAsync(file, item.CoverArtImages);
+                var result = await _metadataService.SaveCoverArtAsync(file, item.CoverArtImages);
+                if (result.Succeeded)
+                {
+                    item.CoverArtImages = result.ReloadedCoverArtImages.ToList();
+                }
+
+                return result;
             }
             catch (Exception ex)
             {

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using Archivio.Models;
 
 namespace Archivio.ViewModels
 {
@@ -19,6 +20,16 @@ namespace Archivio.ViewModels
         public double TechnicalColumnWidth { get; set; } = -1;
         public Dictionary<string, double> ColumnWidths { get; set; } = new();
         public List<string> ColumnOrder { get; set; } = new();
+        /// <summary>一覧に表示する項目ID。nullは旧設定からの移行または既定値を表す。</summary>
+        public List<string>? VisibleListFieldIds { get; set; }
+        /// <summary>カタログの安定IDによる一覧列順。</summary>
+        public List<string> ListFieldOrder { get; set; } = new();
+        /// <summary>カタログの安定IDによる一覧列幅。</summary>
+        public Dictionary<string, double> ListFieldWidths { get; set; } = new();
+        /// <summary>詳細画面で表示する項目ID。nullは既定表示を表す。</summary>
+        public List<string>? VisibleDetailFieldIds { get; set; }
+        /// <summary>カタログの安定IDによる詳細項目順。</summary>
+        public List<string> DetailFieldOrder { get; set; } = new();
         public string Language { get; set; } = string.Empty;
         public bool IncludeSubfolders { get; set; } = true;
         /// <summary>前回開いていた動画フォルダのパス。</summary>
@@ -29,6 +40,8 @@ namespace Archivio.ViewModels
         public int ThumbnailTileSizeIndex { get; set; } = 1;
         /// <summary>任意の FFprobe 実行ファイル。空欄の場合は PATH 上の ffprobe を試す。</summary>
         public string FfprobePath { get; set; } = string.Empty;
+        /// <summary>カスタム項目の定義のみを保持する。作品ごとの値は動画ファイル内に保存する。</summary>
+        public List<CustomMetadataFieldDefinition> CustomMetadataFields { get; set; } = new();
     }
 
     /// <summary>

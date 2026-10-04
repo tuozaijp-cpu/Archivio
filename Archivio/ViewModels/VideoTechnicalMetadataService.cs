@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Archivio.Models;
 using Microsoft.WindowsAPICodePack.Shell;
 using Microsoft.WindowsAPICodePack.Shell.PropertySystem;
 using Windows.Storage;
@@ -12,6 +13,7 @@ namespace Archivio.ViewModels
 {
     internal sealed class TechnicalMetadataLoadResult
     {
+        public VideoTechnicalInfo TechnicalInfo { get; init; } = new();
         public bool WindowsPropertiesLoaded { get; init; }
         public bool TechnicalPropertiesLoaded { get; init; }
         public IReadOnlyList<string> WindowsPropertyErrors { get; init; } = Array.Empty<string>();
@@ -44,6 +46,7 @@ namespace Archivio.ViewModels
         {
             ApplyTagLibProperties(snapshot, tagLibProperties);
             var probeResult = await _mediaProbeService.ProbeAsync(file, cancellationToken);
+            snapshot.TechnicalInfo = probeResult.Technical;
             return await Task.Run(() =>
             {
                 var errors = new List<string>();
@@ -129,13 +132,63 @@ namespace Archivio.ViewModels
                     }
                 }
 
+                MergeLegacyValuesIntoTechnicalInfo(snapshot);
+
                 return new TechnicalMetadataLoadResult
                 {
+                    TechnicalInfo = snapshot.TechnicalInfo,
                     WindowsPropertiesLoaded = errors.Count == 0,
                     TechnicalPropertiesLoaded = probeResult.HasValues || errors.Count == 0,
                     WindowsPropertyErrors = errors
                 };
             }, cancellationToken);
+        }
+
+        private static void MergeLegacyValuesIntoTechnicalInfo(VideoMetadataSnapshot snapshot)
+        {
+            var technical = snapshot.TechnicalInfo ??= new VideoTechnicalInfo();
+            var video = technical.PrimaryVideo;
+            if (video is null && (!string.IsNullOrWhiteSpace(snapshot.FrameWidth)
+                || !string.IsNullOrWhiteSpace(snapshot.FrameHeight)
+                || !string.IsNullOrWhiteSpace(snapshot.FrameRate)
+                || !string.IsNullOrWhiteSpace(snapshot.VideoBitrate)))
+            {
+                video = new VideoStreamInfo();
+                technical.VideoStreams.Add(video);
+            }
+
+            if (video is not null)
+            {
+                video.Width ??= ParseInt(snapshot.FrameWidth);
+                video.Height ??= ParseInt(snapshot.FrameHeight);
+                video.FrameRate ??= ParseDouble(snapshot.FrameRate);
+                video.Bitrate ??= ParseBitrate(snapshot.VideoBitrate);
+                if (string.IsNullOrWhiteSpace(video.Codec))
+                {
+                    video.Codec = snapshot.VideoCompression;
+                }
+            }
+
+            var audio = technical.PrimaryAudio;
+            if (audio is null && (!string.IsNullOrWhiteSpace(snapshot.AudioSampleRate)
+                || !string.IsNullOrWhiteSpace(snapshot.AudioBitrate)
+                || !string.IsNullOrWhiteSpace(snapshot.AudioFormat)))
+            {
+                audio = new AudioStreamInfo();
+                technical.AudioStreams.Add(audio);
+            }
+
+            if (audio is not null)
+            {
+                audio.SampleRate ??= ParseInt(snapshot.AudioSampleRate);
+                audio.Bitrate ??= ParseBitrate(snapshot.AudioBitrate);
+                if (string.IsNullOrWhiteSpace(audio.Codec))
+                {
+                    audio.Codec = snapshot.AudioFormat;
+                }
+            }
+
+            technical.Duration ??= snapshot.Technical.Duration;
         }
 
         public static string DecodeVideoSubtypeGuid(string guidStr)

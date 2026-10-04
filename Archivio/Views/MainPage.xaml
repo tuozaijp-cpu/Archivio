@@ -95,6 +95,18 @@
                     Content=""
                     IsEnabled="{x:Bind ViewModel.CanExportCsv, Mode=OneWay}" />
                 <Button
+                    x:Name="ConfigureColumnsButton"
+                    Click="ConfigureColumnsButton_Click"
+                    Content="" />
+                <Button
+                    x:Name="ConfigureDetailsButton"
+                    Click="ConfigureDetailsButton_Click"
+                    Content="" />
+                <Button
+                    x:Name="ConfigureCustomFieldsButton"
+                    Click="ConfigureCustomFieldsButton_Click"
+                    Content="Custom Fields" />
+                <Button
                     x:Name="CancelRefreshButton"
                     Click="CancelRefreshButton_Click"
                     Content=""
@@ -186,29 +198,6 @@
                             <MenuFlyoutItem x:Name="AboutMenuItem" Text="" Click="AboutMenuItem_Click" />
                         </MenuFlyout>
                     </controls:DataGrid.ContextFlyout>
-                    <controls:DataGrid.Columns>
-                        <controls:DataGridTextColumn Binding="{Binding StatusText}" IsReadOnly="True" Width="80" Tag="StatusText" />
-                        <controls:DataGridTextColumn Binding="{Binding FileName, Mode=TwoWay}" IsReadOnly="True" Width="220" Tag="FileName" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding FileSizeText}" IsReadOnly="True" Width="90" Tag="FileSizeText" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Title}" IsReadOnly="True" Width="180" Tag="Title" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Participants}" IsReadOnly="True" Width="180" Tag="Participants" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding ReleaseDateText}" IsReadOnly="True" Width="120" Tag="ReleaseDateText" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding CatalogNumber}" IsReadOnly="True" Width="140" Tag="CatalogNumber" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding RatingStarsText}" IsReadOnly="True" Width="120" Tag="Rating" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Publisher}" IsReadOnly="True" Width="140" Tag="Publisher" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding ContentDistributor}" IsReadOnly="True" Width="140" Tag="ContentDistributor" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Category}" IsReadOnly="True" Width="120" Tag="Category" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Comment}" IsReadOnly="True" Width="220" Tag="Comment" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding Duration}" IsReadOnly="True" Width="100" Tag="Duration" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding FrameWidth}" IsReadOnly="True" Width="90" Tag="FrameWidth" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding FrameHeight}" IsReadOnly="True" Width="90" Tag="FrameHeight" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding FrameRate}" IsReadOnly="True" Width="90" Tag="FrameRate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding VideoBitrate}" IsReadOnly="True" Width="110" Tag="VideoBitrate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding VideoCompression}" IsReadOnly="True" Width="120" Tag="VideoCompression" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding AudioSampleRate}" IsReadOnly="True" Width="110" Tag="AudioSampleRate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding AudioBitrate}" IsReadOnly="True" Width="110" Tag="AudioBitrate" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                        <controls:DataGridTextColumn Binding="{Binding AudioFormat}" IsReadOnly="True" Width="110" Tag="AudioFormat" HeaderStyle="{StaticResource FilteringColumnHeaderStyle}" />
-                    </controls:DataGrid.Columns>
                     </controls:DataGrid>
 
                 <GridView
@@ -299,7 +288,7 @@
                 <Grid.ColumnDefinitions>
                     <!-- Left: Large Cover Art Area (6*) -->
                     <ColumnDefinition x:Name="CoverArtColumn" Width="6*" MinWidth="200" />
-                    <ColumnDefinition Width="12" /> <!-- For GridSplitter -->
+                    <ColumnDefinition x:Name="CoverArtSplitterColumn" Width="12" /> <!-- For GridSplitter -->
                     <!-- Middle: Editable properties panel (5*) -->
                     <ColumnDefinition x:Name="PropertiesColumn" Width="5*" MinWidth="200" />
                     <ColumnDefinition Width="12" /> <!-- For GridSplitter -->
@@ -308,7 +297,7 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- Left Panel: Cover Art FlipView and its associated edit toolbar -->
-                <Grid Grid.Column="0">
+                <Grid x:Name="CoverArtPane" Grid.Column="0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
@@ -400,6 +389,7 @@
 
                 <!-- Vertical GridSplitter between Cover Art and Properties Panel -->
                 <controls:GridSplitter
+                    x:Name="CoverArtGridSplitter"
                     Grid.Column="1"
                     Width="12"
                     HorizontalAlignment="Center"
@@ -414,24 +404,7 @@
 
                 <!-- Right Panel: Scrollable Editable Properties -->
                 <ScrollViewer Grid.Column="2">
-                    <StackPanel Spacing="12" Padding="0,0,12,0">
-                        <TextBox
-                            x:Name="TitleTextBox"
-                            Header=""
-                            Text="{x:Bind ViewModel.SelectedVideo.Title, Mode=TwoWay}" />
-                        <TextBox
-                            x:Name="ParticipantsTextBox"
-                            Header=""
-                            Text="{x:Bind ViewModel.SelectedVideo.Participants, Mode=TwoWay}" />
-                        <DatePicker
-                            x:Name="ReleaseDatePicker"
-                            Header=""
-                            Date="{x:Bind ViewModel.SelectedVideo.ReleaseDate, Mode=OneWay}"
-                            DateChanged="ReleaseDatePicker_DateChanged" />
-                        <TextBox
-                            x:Name="CatalogNumberTextBox"
-                            Header=""
-                            Text="{x:Bind ViewModel.SelectedVideo.CatalogNumber, Mode=TwoWay}" />
+                    <StackPanel x:Name="EditableMetadataFieldsPanel" Spacing="12" Padding="0,0,12,0">
                         <ComboBox
                             x:Name="RatingComboBox"
                             Header=""
@@ -444,22 +417,6 @@
                             <ComboBoxItem Content="" />
                             <ComboBoxItem Content="" />
                         </ComboBox>
-                        <TextBox
-                            x:Name="PublisherTextBox"
-                            Header=""
-                            Text="{x:Bind ViewModel.SelectedVideo.Publisher, Mode=TwoWay}" />
-                        <TextBox
-                            x:Name="ContentDistributorTextBox"
-                            Header=""
-                            Text="{x:Bind ViewModel.SelectedVideo.ContentDistributor, Mode=TwoWay}" />
-                        <TextBox
-                            x:Name="CategoryTextBox"
-                            Header=""
-                            Text="{x:Bind ViewModel.SelectedVideo.Category, Mode=TwoWay}" />
-                        <TextBox
-                            x:Name="CommentTextBox"
-                            Header=""
-                            Text="{x:Bind ViewModel.SelectedVideo.Comment, Mode=TwoWay}" />
                         <Button
                             x:Name="SaveMetadataButton"
                             HorizontalAlignment="Left"
@@ -485,7 +442,7 @@
 
                 <!-- Far Right Panel: Scrollable Non-Editable Technical Properties -->
                 <ScrollViewer Grid.Column="4">
-                    <StackPanel Spacing="12" Padding="0,0,12,0">
+                    <StackPanel x:Name="TechnicalMetadataFieldsPanel" Spacing="12" Padding="0,0,12,0">
                         <TextBox
                             x:Name="DurationTextBox"
                             Header=""

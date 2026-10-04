@@ -201,6 +201,17 @@ namespace Archivio.ViewModels
                     _fileSizeCache[path] = size;
                     _lastWriteTimeCache[path] = mtime;
                     _metadataCache[path] = meta;
+
+                    // 詳細画面から保存した後も、一覧が保持している同一作品カードへ
+                    // 保存後に再読み込みした値を直ちに反映する。特にReleaseDateTextは
+                    // ReleaseDateから表示文字列へ変換されるため、キャッシュ更新だけでは
+                    // 既存行の表示が更新されない場合がある。
+                    var listItem = _allVideosList.FirstOrDefault(item =>
+                        string.Equals(item.FullPath, path, StringComparison.OrdinalIgnoreCase));
+                    if (listItem is not null)
+                    {
+                        ApplyMetadataToItem(listItem, meta);
+                    }
                 },
                 OnCoverArtSaved
             );
@@ -1392,6 +1403,7 @@ namespace Archivio.ViewModels
         /// </summary>
         private static void ApplyMetadataToItem(VideoFileItem item, VideoMetadataSnapshot meta)
         {
+            item.StructuredMetadata = meta.StructuredMetadata;
             item.Title = meta.Title;
             item.Participants = meta.Participants;
             item.CatalogNumber = meta.CatalogNumber;
@@ -1427,6 +1439,7 @@ namespace Archivio.ViewModels
             if (item.HasChanges(nameof(VideoFileItem.ContentDistributor))) changedProperties.Add("ContentDistributor");
             if (item.HasChanges(nameof(VideoFileItem.Publisher))) changedProperties.Add("Publisher");
             if (item.HasChanges(nameof(VideoFileItem.ReleaseDate))) changedProperties.Add("ReleaseDate");
+            changedProperties.AddRange(item.DirtyCustomMetadataFieldIds);
 
             if (changedProperties.Count == 0)
             {
@@ -1440,7 +1453,14 @@ namespace Archivio.ViewModels
                 var originalMetadata = item.CreateOriginalMetadataSnapshot();
 
                 var file = await item.GetFileAsync();
-                return await _metadataService.SaveMetadataAsync(file, metadata, originalMetadata, changedProperties);
+                var result = await _metadataService.SaveMetadataAsync(file, metadata, originalMetadata, changedProperties);
+                if (result.Succeeded && result.ReloadedMetadata is not null)
+                {
+                    ApplyMetadataToItem(item, result.ReloadedMetadata);
+                    item.UpdateOriginalValuesFromSnapshot(result.ReloadedMetadata);
+                }
+
+                return result;
             }
             catch (Exception ex)
             {
@@ -1536,7 +1556,13 @@ namespace Archivio.ViewModels
             try
             {
                 var file = await item.GetFileAsync();
-                return await _metadataService.SaveCoverArtAsync(file, item.CoverArtImages);
+                var result = await _metadataService.SaveCoverArtAsync(file, item.CoverArtImages);
+                if (result.Succeeded)
+                {
+                    item.CoverArtImages = result.ReloadedCoverArtImages.ToList();
+                }
+
+                return result;
             }
             catch (Exception ex)
             {

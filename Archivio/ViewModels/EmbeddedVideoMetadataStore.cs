@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Archivio.Models;
 using TagLib;
 using Windows.Storage;
 
@@ -26,6 +27,7 @@ namespace Archivio.ViewModels
     {
         public VideoMetadataSnapshot Metadata { get; init; } = new();
         public TagLibTechnicalProperties TechnicalProperties { get; init; } = new();
+        public string? ArchivioMetadataError { get; init; }
     }
 
     internal interface IEmbeddedVideoMetadataStore
@@ -43,9 +45,7 @@ namespace Archivio.ViewModels
 
     internal sealed class EmbeddedVideoMetadataStore : IEmbeddedVideoMetadataStore
     {
-        private const string ArchivioTagOwner = "com.archivio";
-        private const string ReleaseDateTagName = "ReleaseDate";
-        private const string RatingTagName = "Rating";
+        private sealed record FileVersion(long Length, DateTime LastWriteTimeUtc);
 
         public Task<EmbeddedVideoMetadataLoadResult> LoadAsync(StorageFile file)
         {
@@ -53,6 +53,7 @@ namespace Archivio.ViewModels
             {
                 var snapshot = new VideoMetadataSnapshot();
                 var technicalProperties = new TagLibTechnicalProperties();
+                var adapter = EmbeddedMetadataFormatAdapterSelector.Select(file.Path);
                 try
                 {
                     using var tagFile = TagLib.File.Create(file.Path);
@@ -61,34 +62,20 @@ namespace Archivio.ViewModels
                         return new EmbeddedVideoMetadataLoadResult { Metadata = snapshot };
                     }
 
-                    snapshot.Title = tagFile.Tag.Title ?? string.Empty;
-                    snapshot.Participants = string.Join("; ", tagFile.Tag.Performers ?? Array.Empty<string>());
-                    snapshot.Comment = tagFile.Tag.Comment ?? string.Empty;
-                    snapshot.Category = string.Join("; ", tagFile.Tag.Genres ?? Array.Empty<string>());
-                    snapshot.CatalogNumber = tagFile.Tag.Grouping ?? string.Empty;
-                    snapshot.ContentDistributor = tagFile.Tag.Copyright ?? string.Empty;
-
-                    var extension = Path.GetExtension(file.Path);
-                    if (IsMatroska(extension))
+                    var document = adapter.ReadMetadataDocument(tagFile);
+                    var archivioResult = adapter.ReadArchivioMetadata(tagFile);
+                    if (archivioResult.Payload is not null)
                     {
-                        var matroskaTag = tagFile.GetTag(TagTypes.Matroska, create: false) as TagLib.Matroska.Tag;
-                        snapshot.Publisher = GetMatroskaCustomText(matroskaTag, "PUBLISHER");
-                        if (string.IsNullOrWhiteSpace(snapshot.Publisher))
-                        {
-                            snapshot.Publisher = tagFile.Tag.Publisher ?? string.Empty;
-                        }
+                        ArchivioMetadataPayloadMapper.ApplyToDocument(document, archivioResult.Payload);
                     }
-                    else
-                    {
-                        snapshot.Publisher = tagFile.Tag.Publisher ?? string.Empty;
-                    }
-
-                    snapshot.Rating = ReadCustomText(tagFile, file.Path, RatingTagName);
-                    snapshot.ReleaseDate = ReadReleaseDate(tagFile, file.Path);
-                    snapshot.ReleaseDateText = snapshot.ReleaseDate.Year > 1900
-                        ? snapshot.ReleaseDate.ToString("yyyy-MM-dd")
-                        : string.Empty;
+                    snapshot = MetadataDocumentMapper.ToSnapshot(document);
                     technicalProperties = ReadTechnicalProperties(tagFile);
+                    return new EmbeddedVideoMetadataLoadResult
+                    {
+                        Metadata = snapshot,
+                        TechnicalProperties = technicalProperties,
+                        ArchivioMetadataError = archivioResult.Error
+                    };
                 }
                 catch (Exception ex)
                 {
@@ -120,6 +107,7 @@ namespace Archivio.ViewModels
 
             return await Task.Run(() =>
             {
+                var adapter = EmbeddedMetadataFormatAdapterSelector.Select(file.Path);
                 var fieldsToPersist = new List<string>();
                 AddChangedField(fieldsToPersist, changedPropertyList, "Title", metadata.Title, originalMetadata?.Title);
                 AddChangedField(fieldsToPersist, changedPropertyList, "Participants", metadata.Participants, originalMetadata?.Participants);
@@ -135,6 +123,10 @@ namespace Archivio.ViewModels
                     fieldsToPersist.Add("ReleaseDate");
                 }
 
+                // 将来の独自項目UIからは安定した項目IDをそのまま受け取れるようにする。
+                fieldsToPersist.AddRange(changedPropertyList
+                    .Where(ArchivioMetadataPayloadMapper.IsPayloadFieldId));
+
                 if (fieldsToPersist.Count == 0)
                 {
                     return new VideoMetadataOperationResult { Succeeded = true, Message = LanguageManager.GetString("Msg_NoChanges") };
@@ -142,29 +134,93 @@ namespace Archivio.ViewModels
 
                 var warningErrors = new List<string>();
                 var fatalErrors = new List<string>();
-                var unsupportedCustomFields = fieldsToPersist
-                    .Where(field => field is "Rating" or "ReleaseDate")
-                    .Where(_ => !SupportsCustomArchivioTags(file.Path))
+                var archivioMetadataErrors = new List<string>();
+                ArchivioMetadataPayload? archivioPayloadToVerify = null;
+                VideoMetadataSnapshot? reloadedMetadata = null;
+                string? temporaryPath = null;
+                FileVersion? originalVersion = null;
+
+                try
+                {
+                    originalVersion = ReadFileVersion(file.Path);
+                    temporaryPath = CreateTemporaryPath(file.Path);
+                    System.IO.File.Copy(file.Path, temporaryPath, overwrite: false);
+                }
+                catch (Exception ex)
+                {
+                    fatalErrors.Add(LanguageManager.GetString("Msg_SaveError", ex.Message));
+                }
+
+                var fieldCapabilities = fieldsToPersist
+                    .Select(field =>
+                    {
+                        var fieldId = ResolveFieldId(field);
+                        var support = adapter.GetFieldSupport(fieldId);
+                        return new MetadataFieldCapabilityResult
+                        {
+                            FieldId = fieldId,
+                            Capability = support.Capability,
+                            CanRead = support.CanRead,
+                            CanWrite = support.CanWrite,
+                            FailureReason = support.FailureReason
+                        };
+                    })
                     .ToList();
-                if (unsupportedCustomFields.Count > 0)
+                var unsupportedFields = fieldCapabilities
+                    .Where(result => !result.CanWrite)
+                    .Select(result => result.FieldId)
+                    .ToList();
+                if (unsupportedFields.Count > 0)
                 {
                     warningErrors.Add(LanguageManager.GetString(
                         "Msg_UnsupportedCustomMetadata",
                         Path.GetExtension(file.Path),
-                        string.Join("、", unsupportedCustomFields)));
-                    fieldsToPersist = fieldsToPersist.Except(unsupportedCustomFields, StringComparer.OrdinalIgnoreCase).ToList();
+                        string.Join("、", unsupportedFields)));
+                    var writableFieldIds = fieldCapabilities
+                        .Where(result => result.CanWrite)
+                        .Select(result => result.FieldId)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    fieldsToPersist = fieldsToPersist
+                        .Where(field => writableFieldIds.Contains(ResolveFieldId(field)))
+                        .ToList();
                 }
 
                 try
                 {
-                    using var tagFile = TagLib.File.Create(file.Path);
+                    if (temporaryPath is null)
+                    {
+                        throw new InvalidOperationException("保存用一時ファイルを作成できませんでした。");
+                    }
+
+                    using var tagFile = TagLib.File.Create(temporaryPath);
                     if (tagFile.Tag is null)
                     {
                         fatalErrors.Add(LanguageManager.GetString("Msg_EmbeddedTagsUnavailable"));
                     }
                     else
                     {
-                        SaveStandardFields(tagFile, file.Path, metadata, fieldsToPersist);
+                        var document = MetadataDocumentMapper.FromSnapshot(metadata);
+                        var fieldIds = fieldsToPersist.Select(ResolveFieldId).ToArray();
+                        adapter.WriteMetadataDocument(tagFile, document, fieldIds);
+
+                        // 独自ペイロードは標準タグとは別領域へ保存する。空の互換スナップショットで
+                        // 既存の独自データを上書きしないよう、独自データがある場合だけ書き込む。
+                        if (ArchivioMetadataPayloadMapper.HasData(document)
+                            || changedPropertyList.Any(ArchivioMetadataPayloadMapper.IsPayloadFieldId))
+                        {
+                            var payload = ArchivioMetadataPayloadMapper.FromDocument(document);
+                            try
+                            {
+                                adapter.WriteArchivioMetadata(tagFile, payload);
+                                archivioPayloadToVerify = payload;
+                            }
+                            catch (Exception ex)
+                            {
+                                AppLogger.Error("Archivio独自メタデータの保存に失敗しました", ex, file.Path);
+                                archivioMetadataErrors.Add(ex.Message);
+                                fatalErrors.Add(ex.Message);
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -173,11 +229,23 @@ namespace Archivio.ViewModels
                     fatalErrors.Add(LanguageManager.GetString("Msg_SaveError", ex.Message));
                 }
 
+                if (archivioPayloadToVerify is not null && fatalErrors.Count == 0)
+                {
+                    try
+                    {
+                        VerifyArchivioMetadata(temporaryPath!, adapter, archivioPayloadToVerify);
+                    }
+                    catch (Exception ex)
+                    {
+                        archivioMetadataErrors.Add(ex.Message);
+                    }
+                }
+
                 if (fieldsToPersist.Count > 0 && fatalErrors.Count == 0)
                 {
                     try
                     {
-                        VerifyEmbeddedMetadata(file.Path, metadata, fieldsToPersist);
+                        VerifyEmbeddedMetadata(temporaryPath!, metadata, fieldsToPersist, adapter);
                     }
                     catch (Exception ex)
                     {
@@ -185,21 +253,59 @@ namespace Archivio.ViewModels
                     }
                 }
 
+                if (fatalErrors.Count == 0)
+                {
+                    try
+                    {
+                        EnsureFileUnchanged(file.Path, originalVersion!);
+                        CommitTemporaryFile(temporaryPath!, file.Path);
+                        reloadedMetadata = ReadMetadataSnapshot(file.Path, adapter);
+                    }
+                    catch (Exception ex)
+                    {
+                        fatalErrors.Add(LanguageManager.GetString("Msg_SaveError", ex.Message));
+                    }
+                }
+
+                if (temporaryPath is not null)
+                {
+                    TryDeleteTemporaryFile(temporaryPath);
+                }
+
+                if (fatalErrors.Count > 0)
+                {
+                    fieldCapabilities = fieldCapabilities
+                        .Select(result => result.CanWrite
+                            ? new MetadataFieldCapabilityResult
+                            {
+                                FieldId = result.FieldId,
+                                Capability = MetadataFieldCapability.Failed,
+                                CanRead = result.CanRead,
+                                CanWrite = false,
+                                FailureReason = fatalErrors[0]
+                            }
+                            : result)
+                        .ToList();
+                }
+
                 var succeeded = fatalErrors.Count == 0;
-                var errors = warningErrors.Concat(fatalErrors).ToList();
+                var errors = warningErrors.Concat(archivioMetadataErrors).Concat(fatalErrors).ToList();
                 return new VideoMetadataOperationResult
                 {
                     Succeeded = succeeded,
-                    HasWarnings = succeeded && warningErrors.Count > 0,
+                    HasWarnings = succeeded && (warningErrors.Count > 0 || archivioMetadataErrors.Count > 0),
                     Message = succeeded
-                        ? warningErrors.Count > 0
+                        ? warningErrors.Count > 0 || archivioMetadataErrors.Count > 0
                             ? LanguageManager.GetString("Msg_PartialSaveSuccess")
                             : LanguageManager.GetString("Msg_SaveSuccess")
                         : LanguageManager.GetString("Msg_SaveFailed"),
                     Details = errors.Count == 0 ? null : string.Join(Environment.NewLine, errors),
                     SavedProperties = succeeded ? fieldsToPersist : Array.Empty<string>(),
                     FailedProperties = succeeded ? Array.Empty<string>() : fieldsToPersist,
-                    UnsupportedProperties = unsupportedCustomFields
+                    UnsupportedProperties = unsupportedFields,
+                    FieldCapabilities = fieldCapabilities,
+                    ArchivioMetadataErrors = archivioMetadataErrors,
+                    ReloadedMetadata = succeeded ? reloadedMetadata : null
                 };
             });
         }
@@ -275,23 +381,38 @@ namespace Archivio.ViewModels
         {
             return await Task.Run(() =>
             {
+                string? temporaryPath = null;
                 try
                 {
-                    using var tagFile = TagLib.File.Create(file.Path);
-                    var pictures = new List<IPicture>();
-                    foreach (var coverArt in coverArtImages ?? Array.Empty<CoverArtImageData>())
+                    var originalVersion = ReadFileVersion(file.Path);
+                    temporaryPath = CreateTemporaryPath(file.Path);
+                    System.IO.File.Copy(file.Path, temporaryPath, overwrite: false);
+                    using (var tagFile = TagLib.File.Create(temporaryPath))
                     {
-                        pictures.Add(new TagLib.Picture(new ByteVector(coverArt?.Data ?? Array.Empty<byte>()))
+                        var pictures = new List<IPicture>();
+                        foreach (var coverArt in coverArtImages ?? Array.Empty<CoverArtImageData>())
                         {
-                            MimeType = coverArt?.MimeType ?? "image/jpeg",
-                            Description = coverArt?.Description ?? string.Empty,
-                            Type = coverArt?.Type ?? PictureType.FrontCover
-                        });
-                    }
+                            pictures.Add(new TagLib.Picture(new ByteVector(coverArt?.Data ?? Array.Empty<byte>()))
+                            {
+                                MimeType = coverArt?.MimeType ?? "image/jpeg",
+                                Description = coverArt?.Description ?? string.Empty,
+                                Type = coverArt?.Type ?? PictureType.FrontCover
+                            });
+                        }
 
-                    tagFile.Tag.Pictures = pictures.ToArray();
-                    tagFile.Save();
-                    return new VideoMetadataOperationResult { Succeeded = true, Message = LanguageManager.GetString("Msg_CoverImageSaved") };
+                        tagFile.Tag.Pictures = pictures.ToArray();
+                        tagFile.Save();
+                    }
+                    VerifyCoverArt(temporaryPath);
+                    EnsureFileUnchanged(file.Path, originalVersion);
+                    CommitTemporaryFile(temporaryPath, file.Path);
+                    var reloaded = ReadCoverArtImages(file.Path);
+                    return new VideoMetadataOperationResult
+                    {
+                        Succeeded = true,
+                        Message = LanguageManager.GetString("Msg_CoverImageSaved"),
+                        ReloadedCoverArtImages = reloaded
+                    };
                 }
                 catch (Exception ex)
                 {
@@ -303,7 +424,100 @@ namespace Archivio.ViewModels
                         Details = ex.Message
                     };
                 }
+                finally
+                {
+                    if (temporaryPath is not null)
+                    {
+                        TryDeleteTemporaryFile(temporaryPath);
+                    }
+                }
             });
+        }
+
+        private static FileVersion ReadFileVersion(string path)
+        {
+            var fileInfo = new FileInfo(path);
+            if (!fileInfo.Exists)
+            {
+                throw new FileNotFoundException("対象ファイルが存在しません。", path);
+            }
+
+            return new FileVersion(fileInfo.Length, fileInfo.LastWriteTimeUtc);
+        }
+
+        private static string CreateTemporaryPath(string path)
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                throw new InvalidOperationException("対象ファイルの保存先を特定できません。");
+            }
+
+            return Path.Combine(directory, $".{Path.GetFileNameWithoutExtension(path)}.archivio-{Guid.NewGuid():N}{Path.GetExtension(path)}");
+        }
+
+        private static void EnsureFileUnchanged(string path, FileVersion expected)
+        {
+            var actual = ReadFileVersion(path);
+            if (actual.Length != expected.Length || actual.LastWriteTimeUtc != expected.LastWriteTimeUtc)
+            {
+                throw new InvalidOperationException("保存中に外部アプリケーションがファイルを変更したため、上書きしませんでした。再読み込みしてください。");
+            }
+        }
+
+        private static void CommitTemporaryFile(string temporaryPath, string targetPath)
+        {
+            // 一時ファイルは同一フォルダー・同一拡張子で作成し、Windowsの置換操作を使う。
+            System.IO.File.Replace(temporaryPath, targetPath, null, ignoreMetadataErrors: true);
+        }
+
+        private static void TryDeleteTemporaryFile(string path)
+        {
+            try
+            {
+                if (System.IO.File.Exists(path))
+                {
+                    System.IO.File.Delete(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("保存用一時ファイルの削除に失敗しました", ex, path);
+            }
+        }
+
+        private static VideoMetadataSnapshot ReadMetadataSnapshot(string path, IEmbeddedMetadataFormatAdapter adapter)
+        {
+            using var savedFile = TagLib.File.Create(path);
+            var document = adapter.ReadMetadataDocument(savedFile);
+            var archivioResult = adapter.ReadArchivioMetadata(savedFile);
+            if (archivioResult.Payload is not null)
+            {
+                ArchivioMetadataPayloadMapper.ApplyToDocument(document, archivioResult.Payload);
+            }
+
+            return MetadataDocumentMapper.ToSnapshot(document);
+        }
+
+        private static void VerifyCoverArt(string path)
+        {
+            using var savedFile = TagLib.File.Create(path);
+            _ = savedFile.Tag.Pictures.Count();
+        }
+
+        private static IReadOnlyList<CoverArtImageData> ReadCoverArtImages(string path)
+        {
+            using var savedFile = TagLib.File.Create(path);
+            return savedFile.Tag.Pictures
+                .Where(picture => picture?.Data?.Data is not null)
+                .Select(picture => new CoverArtImageData
+                {
+                    Data = picture!.Data.Data,
+                    MimeType = picture.MimeType ?? "image/jpeg",
+                    Description = picture.Description ?? string.Empty,
+                    Type = picture.Type
+                })
+                .ToList();
         }
 
         private static void AddChangedField(
@@ -316,84 +530,6 @@ namespace Archivio.ViewModels
             if (requestedFields.Contains(field) && HasValueChanged(currentValue, originalValue))
             {
                 fields.Add(field);
-            }
-        }
-
-        private static void SaveStandardFields(
-            TagLib.File tagFile,
-            string path,
-            VideoMetadataSnapshot metadata,
-            IReadOnlyCollection<string> fields)
-        {
-            var isDirty = false;
-            if (fields.Contains("Title"))
-            {
-                tagFile.Tag.Title = metadata.Title;
-                isDirty = true;
-            }
-
-            if (fields.Contains("Participants"))
-            {
-                tagFile.Tag.Performers = SplitValues(metadata.Participants);
-                isDirty = true;
-            }
-
-            if (fields.Contains("Comment"))
-            {
-                tagFile.Tag.Comment = metadata.Comment;
-                isDirty = true;
-            }
-
-            if (fields.Contains("ReleaseDate"))
-            {
-                tagFile.Tag.Year = metadata.ReleaseDate.Year > 1900 ? (uint)metadata.ReleaseDate.Year : 0;
-                SetCustomText(tagFile, path, ReleaseDateTagName,
-                    metadata.ReleaseDate.Year > 1900
-                        ? metadata.ReleaseDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
-                        : string.Empty);
-                isDirty = true;
-            }
-
-            if (fields.Contains("Rating"))
-            {
-                SetCustomText(tagFile, path, RatingTagName, metadata.Rating ?? string.Empty);
-                isDirty = true;
-            }
-
-            if (fields.Contains("Category"))
-            {
-                tagFile.Tag.Genres = SplitValues(metadata.Category);
-                isDirty = true;
-            }
-
-            if (fields.Contains("CatalogNumber"))
-            {
-                tagFile.Tag.Grouping = metadata.CatalogNumber;
-                isDirty = true;
-            }
-
-            if (fields.Contains("Publisher"))
-            {
-                if (IsMatroska(Path.GetExtension(path)))
-                {
-                    var matroskaTag = tagFile.GetTag(TagTypes.Matroska, create: true) as TagLib.Matroska.Tag
-                        ?? throw new NotSupportedException("Matroska タグを作成できません。");
-                    SetMatroskaCustomText(matroskaTag, "PUBLISHER", metadata.Publisher ?? string.Empty);
-                }
-
-                tagFile.Tag.Publisher = metadata.Publisher;
-                isDirty = true;
-            }
-
-            if (fields.Contains("ContentDistributor"))
-            {
-                tagFile.Tag.Copyright = metadata.ContentDistributor;
-                isDirty = true;
-            }
-
-            if (isDirty)
-            {
-                tagFile.Save();
             }
         }
 
@@ -412,32 +548,28 @@ namespace Archivio.ViewModels
             return currentValue.Date != originalValue.Value.Date;
         }
 
-        private static void VerifyEmbeddedMetadata(string path, VideoMetadataSnapshot expected, IEnumerable<string> fields)
+        private static void VerifyEmbeddedMetadata(
+            string path,
+            VideoMetadataSnapshot expected,
+            IEnumerable<string> fields,
+            IEmbeddedMetadataFormatAdapter adapter)
         {
             using var savedFile = TagLib.File.Create(path);
-            var tag = savedFile.Tag ?? throw new InvalidDataException("ファイル内タグを読み取れません。");
+            var actual = MetadataDocumentMapper.ToSnapshot(adapter.ReadMetadataDocument(savedFile));
 
             foreach (var field in fields)
             {
                 var matched = field switch
                 {
-                    "Title" => string.Equals(tag.Title ?? string.Empty, expected.Title ?? string.Empty, StringComparison.Ordinal),
-                    "Participants" => tag.Performers.SequenceEqual(SplitValues(expected.Participants), StringComparer.Ordinal),
-                    "Comment" => string.Equals(tag.Comment ?? string.Empty, expected.Comment ?? string.Empty, StringComparison.Ordinal),
-                    "Category" => tag.Genres.SequenceEqual(SplitValues(expected.Category), StringComparer.Ordinal),
-                    "CatalogNumber" => string.Equals(tag.Grouping ?? string.Empty, expected.CatalogNumber ?? string.Empty, StringComparison.Ordinal),
-                    "Publisher" => string.Equals(
-                        IsMatroska(Path.GetExtension(path))
-                            ? GetMatroskaCustomText(savedFile.GetTag(TagTypes.Matroska, create: false) as TagLib.Matroska.Tag, "PUBLISHER")
-                            : tag.Publisher ?? string.Empty,
-                        expected.Publisher ?? string.Empty,
-                        StringComparison.Ordinal),
-                    "ContentDistributor" => string.Equals(tag.Copyright ?? string.Empty, expected.ContentDistributor ?? string.Empty, StringComparison.Ordinal),
-                    "Rating" => string.Equals(ReadCustomText(savedFile, path, RatingTagName), expected.Rating ?? string.Empty, StringComparison.Ordinal),
-                    "ReleaseDate" => tag.Year == (expected.ReleaseDate.Year > 1900 ? (uint)expected.ReleaseDate.Year : 0)
-                        && string.Equals(ReadCustomText(savedFile, path, ReleaseDateTagName),
-                            expected.ReleaseDate.Year > 1900 ? expected.ReleaseDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : string.Empty,
-                            StringComparison.Ordinal),
+                    "Title" => string.Equals(actual.Title, expected.Title, StringComparison.Ordinal),
+                    "Participants" => string.Equals(actual.Participants, expected.Participants, StringComparison.Ordinal),
+                    "Comment" => string.Equals(actual.Comment, expected.Comment, StringComparison.Ordinal),
+                    "Category" => string.Equals(actual.Category, expected.Category, StringComparison.Ordinal),
+                    "CatalogNumber" => string.Equals(actual.CatalogNumber, expected.CatalogNumber, StringComparison.Ordinal),
+                    "Publisher" => string.Equals(actual.Publisher, expected.Publisher, StringComparison.Ordinal),
+                    "ContentDistributor" => string.Equals(actual.ContentDistributor, expected.ContentDistributor, StringComparison.Ordinal),
+                    "Rating" => string.Equals(actual.Rating, expected.Rating, StringComparison.Ordinal),
+                    "ReleaseDate" => actual.ReleaseDate.Date == expected.ReleaseDate.Date,
                     _ => true
                 };
 
@@ -448,104 +580,33 @@ namespace Archivio.ViewModels
             }
         }
 
-        private static TagLib.Mpeg4.AppleTag? GetAppleTag(TagLib.File file, bool create)
+        private static string ResolveFieldId(string propertyName)
         {
-            return file.GetTag(TagTypes.Apple, create) as TagLib.Mpeg4.AppleTag;
+            var field = MetadataFieldCatalog.All.FirstOrDefault(definition =>
+                string.Equals(definition.DetailsBindingPath, propertyName, StringComparison.Ordinal)
+                || string.Equals(definition.ExistingColumnTag, propertyName, StringComparison.Ordinal)
+                || string.Equals(definition.ListBindingPath, propertyName, StringComparison.Ordinal));
+            return field?.Id ?? propertyName;
         }
 
-        private static bool SupportsCustomArchivioTags(string path)
+        private static void VerifyArchivioMetadata(
+            string path,
+            IEmbeddedMetadataFormatAdapter adapter,
+            ArchivioMetadataPayload expected)
         {
-            var extension = Path.GetExtension(path);
-            return extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".m4v", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".mov", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".webm", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static string ReadCustomText(TagLib.File file, string path, string name)
-        {
-            var extension = Path.GetExtension(path);
-            if (IsMp4Family(extension))
+            using var savedFile = TagLib.File.Create(path);
+            var result = adapter.ReadArchivioMetadata(savedFile);
+            if (result.Error is not null || result.Payload is null)
             {
-                return GetAppleTag(file, create: false)?.GetDashBox(ArchivioTagOwner, name) ?? string.Empty;
+                throw new InvalidDataException(result.Error ?? "Archivio独自メタデータを読み戻せません。");
             }
 
-            if (IsMatroska(extension))
+            var expectedJson = ArchivioMetadataPayloadMapper.Serialize(expected);
+            var actualJson = ArchivioMetadataPayloadMapper.Serialize(result.Payload);
+            if (!string.Equals(expectedJson, actualJson, StringComparison.Ordinal))
             {
-                var tag = file.GetTag(TagTypes.Matroska, create: false) as TagLib.Matroska.Tag;
-                return GetMatroskaCustomText(tag, $"ARCHIVIO_{name.ToUpperInvariant()}");
+                throw new InvalidDataException("Archivio独自メタデータの保存後検証に失敗しました。");
             }
-
-            return string.Empty;
-        }
-
-        private static void SetCustomText(TagLib.File file, string path, string name, string value)
-        {
-            var extension = Path.GetExtension(path);
-            if (IsMp4Family(extension))
-            {
-                var appleTag = GetAppleTag(file, create: true)
-                    ?? throw new NotSupportedException("Apple タグを作成できません。");
-                appleTag.SetDashBox(ArchivioTagOwner, name, value);
-                return;
-            }
-
-            if (IsMatroska(extension))
-            {
-                var tag = file.GetTag(TagTypes.Matroska, create: true) as TagLib.Matroska.Tag
-                    ?? throw new NotSupportedException("Matroska タグを作成できません。");
-                SetMatroskaCustomText(tag, $"ARCHIVIO_{name.ToUpperInvariant()}", value);
-                return;
-            }
-
-            throw new NotSupportedException("この形式は Archivio 固有タグに対応していません。");
-        }
-
-        private static string GetMatroskaCustomText(TagLib.Matroska.Tag? tag, string key)
-        {
-            return tag?.Get(key, null, true)?.FirstOrDefault() ?? string.Empty;
-        }
-
-        private static void SetMatroskaCustomText(TagLib.Matroska.Tag tag, string key, string value)
-        {
-            tag.Set(key, null, string.IsNullOrWhiteSpace(value) ? null : value);
-        }
-
-        private static DateTimeOffset ReadReleaseDate(TagLib.File file, string path)
-        {
-            var rawReleaseDate = ReadCustomText(file, path, ReleaseDateTagName);
-            if (DateTime.TryParseExact(rawReleaseDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
-            {
-                return new DateTimeOffset(parsedDate.Year, parsedDate.Month, parsedDate.Day, 0, 0, 0, TimeSpan.Zero);
-            }
-
-            return file.Tag.Year > 0
-                ? new DateTimeOffset((int)file.Tag.Year, 1, 1, 0, 0, 0, TimeSpan.Zero)
-                : new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        }
-
-        private static string[] SplitValues(string? value)
-        {
-            return string.IsNullOrWhiteSpace(value)
-                ? Array.Empty<string>()
-                : value.Split(new[] { ';', ',', '，', '；' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(item => item.Trim())
-                    .Where(item => item.Length > 0)
-                    .ToArray();
-        }
-
-        private static bool IsMp4Family(string extension)
-        {
-            return extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".m4v", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".mov", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static bool IsMatroska(string extension)
-        {
-            return extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".webm", StringComparison.OrdinalIgnoreCase);
         }
 
         private static TagLibTechnicalProperties ReadTechnicalProperties(TagLib.File tagFile)

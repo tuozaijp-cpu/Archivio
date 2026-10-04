@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Archivio.Models;
 using Windows.Storage;
 
 namespace Archivio.ViewModels
@@ -25,11 +26,29 @@ namespace Archivio.ViewModels
         public IReadOnlyList<string> SavedProperties { get; init; } = Array.Empty<string>();
         public IReadOnlyList<string> FailedProperties { get; init; } = Array.Empty<string>();
         public IReadOnlyList<string> UnsupportedProperties { get; init; } = Array.Empty<string>();
+        /// <summary>保存対象項目ごとのフォーマット能力。画面表示や警告に利用できる。</summary>
+        public IReadOnlyList<MetadataFieldCapabilityResult> FieldCapabilities { get; init; } = Array.Empty<MetadataFieldCapabilityResult>();
+        public IReadOnlyList<string> ArchivioMetadataErrors { get; init; } = Array.Empty<string>();
+        /// <summary>保存後にファイルから再読み込みした実データ。</summary>
+        public VideoMetadataSnapshot? ReloadedMetadata { get; init; }
+        /// <summary>カバー画像保存後にファイルから再読み込みした実データ。</summary>
+        public IReadOnlyList<CoverArtImageData> ReloadedCoverArtImages { get; init; } = Array.Empty<CoverArtImageData>();
+    }
+
+    public sealed class MetadataFieldCapabilityResult
+    {
+        public string FieldId { get; init; } = string.Empty;
+        public MetadataFieldCapability Capability { get; init; }
+        public bool CanRead { get; init; }
+        public bool CanWrite { get; init; }
+        public string? FailureReason { get; init; }
     }
 
     public sealed class VideoMetadataLoadResult
     {
         public VideoMetadataSnapshot Metadata { get; init; } = new();
+        public VideoTechnicalInfo TechnicalInfo { get; init; } = new();
+        public string? ArchivioMetadataError { get; init; }
         public bool WindowsPropertiesLoaded { get; init; }
         /// <summary>FFprobe、Windows API、Shell のいずれかから技術情報を取得できたか。</summary>
         public bool TechnicalPropertiesLoaded { get; init; }
@@ -58,6 +77,9 @@ namespace Archivio.ViewModels
         public string ReleaseDateText { get; set; } = string.Empty;
         public DateTimeOffset ReleaseDate { get; set; } = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
         public VideoTechnicalMetadata Technical { get; set; } = new();
+        /// <summary>複数ストリームを含む自動取得専用の正規化技術情報。</summary>
+        public VideoTechnicalInfo TechnicalInfo { get; set; } = new();
+        public MetadataDocument StructuredMetadata { get; set; } = new();
     }
 
     /// <summary>技術情報の正規化済み内部表現。表示用文字列とは分離する。</summary>
@@ -105,6 +127,8 @@ namespace Archivio.ViewModels
             return new VideoMetadataLoadResult
             {
                 Metadata = embeddedResult.Metadata,
+                TechnicalInfo = technicalResult.TechnicalInfo,
+                ArchivioMetadataError = embeddedResult.ArchivioMetadataError,
                 WindowsPropertiesLoaded = technicalResult.WindowsPropertiesLoaded,
                 TechnicalPropertiesLoaded = technicalResult.TechnicalPropertiesLoaded,
                 WindowsPropertyErrors = technicalResult.WindowsPropertyErrors

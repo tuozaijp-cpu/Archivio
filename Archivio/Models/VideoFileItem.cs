@@ -14,6 +14,25 @@ namespace Archivio.Models
 {
     public sealed class VideoFileItem : ViewModelBase
     {
+        private readonly HashSet<string> _dirtyCustomMetadataFieldIds = new(StringComparer.Ordinal);
+        /// <summary>動画ファイルから読み込んだArchivio共通メタデータ。既存プロパティとの互換用に併存する。</summary>
+        public MetadataDocument StructuredMetadata { get; set; } = new();
+
+        public IReadOnlyCollection<string> DirtyCustomMetadataFieldIds => _dirtyCustomMetadataFieldIds;
+
+        public void MarkCustomMetadataFieldChanged(string fieldId)
+        {
+            if (string.IsNullOrWhiteSpace(fieldId)) return;
+            _dirtyCustomMetadataFieldIds.Add(fieldId);
+            HasPendingChangesNotify();
+        }
+
+        public void ResetCustomMetadataChanges()
+        {
+            _dirtyCustomMetadataFieldIds.Clear();
+            HasPendingChangesNotify();
+        }
+
         private string _title = string.Empty;
         private string _fileSizeText = string.Empty;
         private ulong _fileSizeBytes;
@@ -157,7 +176,8 @@ namespace Archivio.Models
                 Publisher = _publisher,
                 Comment = _comment,
                 ReleaseDateText = _releaseDateText,
-                ReleaseDate = _releaseDate
+                ReleaseDate = _releaseDate,
+                StructuredMetadata = StructuredMetadata
             };
         }
 
@@ -176,7 +196,8 @@ namespace Archivio.Models
                 ReleaseDateText = _originalValues.TryGetValue(nameof(ReleaseDate), out var releaseDateText) ? releaseDateText : _releaseDateText,
                 ReleaseDate = DateTimeOffset.TryParse(_originalValues.TryGetValue(nameof(ReleaseDate), out var releaseDateValue) ? releaseDateValue : _releaseDateText, out var parsedDate)
                     ? parsedDate
-                    : _releaseDate
+                    : _releaseDate,
+                StructuredMetadata = StructuredMetadata
             };
         }
 
@@ -630,7 +651,8 @@ namespace Archivio.Models
 
         public bool HasMetadataChanges()
         {
-            return HasChanges(nameof(Title))
+            return _dirtyCustomMetadataFieldIds.Count > 0
+                || HasChanges(nameof(Title))
                 || HasChanges(nameof(Participants))
                 || HasChanges(nameof(Category))
                 || HasChanges(nameof(Comment))
@@ -664,6 +686,7 @@ namespace Archivio.Models
             {
                 _isApplyingInitialValues = false;
             }
+            ResetCustomMetadataChanges();
         }
 
         public void ResetCoverArtChangeTracking()

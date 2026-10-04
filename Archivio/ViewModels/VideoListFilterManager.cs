@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Archivio.Models;
 
 namespace Archivio.ViewModels
@@ -10,6 +11,14 @@ namespace Archivio.ViewModels
     /// </summary>
     public sealed class VideoListFilterManager
     {
+        private static readonly IReadOnlyDictionary<string, PropertyInfo> ListValueProperties = CreatePropertyMap(
+            field => field.ListBindingPath);
+        private static readonly IReadOnlyDictionary<string, PropertyInfo> SortValueProperties = CreatePropertyMap(
+            field => field.SortBindingPath ?? field.ListBindingPath);
+        private static string[] GetGlobalSearchFieldIds() => MetadataFieldCatalog.All
+            .Where(field => field.IsGlobalSearchable)
+            .Select(field => field.Id)
+            .ToArray();
         private readonly Dictionary<string, HashSet<string>> _columnCheckedValues = new(StringComparer.OrdinalIgnoreCase);
 
         public string FilterText { get; set; } = string.Empty;
@@ -61,16 +70,8 @@ namespace Archivio.ViewModels
             if (!string.IsNullOrWhiteSpace(FilterText))
             {
                 var search = FilterText.Trim().ToLowerInvariant();
-                filtered = filtered.Where(v =>
-                    v.FileName.ToLowerInvariant().Contains(search) ||
-                    v.Title.ToLowerInvariant().Contains(search) ||
-                    v.Participants.ToLowerInvariant().Contains(search) ||
-                    v.CatalogNumber.ToLowerInvariant().Contains(search) ||
-                    v.Publisher.ToLowerInvariant().Contains(search) ||
-                    v.ContentDistributor.ToLowerInvariant().Contains(search) ||
-                    v.Category.ToLowerInvariant().Contains(search) ||
-                    v.Comment.ToLowerInvariant().Contains(search)
-                );
+                filtered = filtered.Where(video => GetGlobalSearchFieldIds().Any(fieldId =>
+                    GetPropertyValueString(video, fieldId).ToLowerInvariant().Contains(search)));
             }
 
             // 2. カラム別フィルター（チェックボックス選択）
@@ -91,23 +92,14 @@ namespace Archivio.ViewModels
             // 3. ソート処理
             if (!string.IsNullOrWhiteSpace(SortColumn))
             {
-                Func<VideoFileItem, object> keySelector = SortColumn switch
-                {
-                    "StatusText" => v => v.StatusText,
-                    "FileName" => v => v.FileName,
-                    "FileSizeText" => v => v.FileSizeBytes, // ファイルサイズ（数値）でソート
-                    "Title" => v => v.Title,
-                    "Participants" => v => v.Participants,
-                    "ReleaseDateText" => v => v.ReleaseDate,
-                    "CatalogNumber" => v => v.CatalogNumber,
-                    "Rating" => v => v.RatingStarsIndex,
-                    "Publisher" => v => v.Publisher,
-                    "ContentDistributor" => v => v.ContentDistributor,
-                    "Category" => v => v.Category,
-                    "Comment" => v => v.Comment,
-                    "Duration" => v => v.DurationValue ?? TimeSpan.Zero, // 再生時間（数値/TimeSpan）でソート
-                    _ => v => v.FileName
-                };
+                Func<VideoFileItem, object> keySelector = SortValueProperties.TryGetValue(SortColumn, out var sortProperty)
+                    ? video => sortProperty.GetValue(video)
+                        ?? (MetadataFieldCatalog.FindById(SortColumn)?.ValueType == MetadataFieldValueType.Duration
+                            ? TimeSpan.Zero
+                            : string.Empty)
+                    : MetadataFieldCatalog.FindById(SortColumn) is { IsCustom: true }
+                        ? video => GetPropertyValueString(video, SortColumn)
+                    : video => video.FileName;
 
                 filtered = IsSortAscending
                     ? filtered.OrderBy(keySelector)
@@ -117,33 +109,44 @@ namespace Archivio.ViewModels
             return filtered;
         }
 
-        private static string GetPropertyValueString(VideoFileItem item, string propertyName)
+        private static Dictionary<string, PropertyInfo> CreatePropertyMap(Func<MetadataFieldDefinition, string?> getPath)
         {
-            return propertyName switch
+            var properties = new Dictionary<string, PropertyInfo>(StringComparer.Ordinal);
+            foreach (var field in MetadataFieldCatalog.All)
             {
-                "StatusText" => item.StatusText,
-                "FileName" => item.FileName,
-                "FileSizeText" => item.FileSizeText,
-                "Title" => item.Title,
-                "Participants" => item.Participants,
-                "ReleaseDateText" => item.ReleaseDateText,
-                "CatalogNumber" => item.CatalogNumber,
-                "Rating" => item.RatingStarsText,
-                "Publisher" => item.Publisher,
-                "ContentDistributor" => item.ContentDistributor,
-                "Category" => item.Category,
-                "Comment" => item.Comment,
-                "Duration" => item.Duration,
-                "FrameWidth" => item.FrameWidth,
-                "FrameHeight" => item.FrameHeight,
-                "FrameRate" => item.FrameRate,
-                "VideoBitrate" => item.VideoBitrate,
-                "VideoCompression" => item.VideoCompression,
-                "AudioSampleRate" => item.AudioSampleRate,
-                "AudioBitrate" => item.AudioBitrate,
-                "AudioFormat" => item.AudioFormat,
-                _ => string.Empty
-            };
+                var path = getPath(field);
+                var property = string.IsNullOrWhiteSpace(path)
+                    ? null
+                    : typeof(VideoFileItem).GetProperty(path);
+                if (property is not null)
+                {
+                    properties[field.Id] = property;
+                }
+            }
+
+            return properties;
+        }
+
+        private static string GetPropertyValueString(VideoFileItem item, string fieldId)
+        {
+            if (ListValueProperties.TryGetValue(fieldId, out var property))
+            {
+                return property.GetValue(item)?.ToString() ?? string.Empty;
+            }
+
+            if (MetadataFieldCatalog.FindById(fieldId) is { IsCustom: true }
+                && item.StructuredMetadata.CustomFields.TryGetValue(fieldId, out var value))
+            {
+                return value.Text
+                    ?? value.Date?.ToString("d", System.Globalization.CultureInfo.CurrentUICulture)
+                    ?? value.Integer?.ToString(System.Globalization.CultureInfo.CurrentCulture)
+                    ?? value.Decimal?.ToString(System.Globalization.CultureInfo.CurrentCulture)
+                    ?? value.Rating?.ToString(System.Globalization.CultureInfo.CurrentCulture)
+                    ?? value.Boolean?.ToString()
+                    ?? string.Join("; ", value.TextValues);
+            }
+
+            return string.Empty;
         }
     }
 }

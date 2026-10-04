@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Archivio.Models;
 using Windows.Storage;
 
 namespace Archivio.ViewModels
@@ -29,10 +30,12 @@ namespace Archivio.ViewModels
         public int? AudioSampleRate { get; init; }
         public long? AudioBitrate { get; init; }
         public string AudioCodec { get; init; } = string.Empty;
+        public VideoTechnicalInfo Technical { get; init; } = new();
 
         public bool HasValues => Duration is not null || FrameWidth is not null || FrameHeight is not null
             || FrameRate is not null || VideoBitrate is not null || !string.IsNullOrWhiteSpace(VideoCodec)
-            || AudioSampleRate is not null || AudioBitrate is not null || !string.IsNullOrWhiteSpace(AudioCodec);
+            || AudioSampleRate is not null || AudioBitrate is not null || !string.IsNullOrWhiteSpace(AudioCodec)
+            || Technical.HasValues;
     }
 
     public sealed class MediaProbeService : IMediaProbeService
@@ -115,8 +118,8 @@ namespace Archivio.ViewModels
                 };
                 startInfo.ArgumentList.Add("-v");
                 startInfo.ArgumentList.Add("error");
-                startInfo.ArgumentList.Add("-show_entries");
-                startInfo.ArgumentList.Add("format=duration,bit_rate:stream=codec_type,codec_name,codec_long_name,width,height,avg_frame_rate,r_frame_rate,bit_rate,sample_rate");
+                startInfo.ArgumentList.Add("-show_format");
+                startInfo.ArgumentList.Add("-show_streams");
                 startInfo.ArgumentList.Add("-of");
                 startInfo.ArgumentList.Add("json");
                 startInfo.ArgumentList.Add(path);
@@ -194,6 +197,7 @@ namespace Archivio.ViewModels
                 : Array.Empty<JsonElement>();
             var video = streams.FirstOrDefault(stream => GetString(stream, "codec_type") == "video");
             var audio = streams.FirstOrDefault(stream => GetString(stream, "codec_type") == "audio");
+            var technical = ParseTechnicalInfo(format, streams);
 
             return new MediaProbeResult
             {
@@ -206,7 +210,121 @@ namespace Archivio.ViewModels
                 VideoCodec = GetString(video, "codec_long_name") ?? GetString(video, "codec_name") ?? string.Empty,
                 AudioSampleRate = TryGetInt(audio, "sample_rate"),
                 AudioBitrate = TryGetLong(audio, "bit_rate"),
-                AudioCodec = GetString(audio, "codec_long_name") ?? GetString(audio, "codec_name") ?? string.Empty
+                AudioCodec = GetString(audio, "codec_long_name") ?? GetString(audio, "codec_name") ?? string.Empty,
+                Technical = technical
+            };
+        }
+
+        private static VideoTechnicalInfo ParseTechnicalInfo(JsonElement format, JsonElement[] streams)
+        {
+            var technical = new VideoTechnicalInfo
+            {
+                Duration = TryGetDuration(format, "duration"),
+                TotalBitrate = TryGetLong(format, "bit_rate")
+            };
+
+            foreach (var stream in streams)
+            {
+                var type = GetString(stream, "codec_type");
+                switch (type)
+                {
+                    case "video":
+                        technical.VideoStreams.Add(ParseVideoStream(stream, technical.Duration));
+                        break;
+                    case "audio":
+                        technical.AudioStreams.Add(ParseAudioStream(stream, technical.Duration));
+                        break;
+                    case "subtitle":
+                        technical.SubtitleStreams.Add(ParseSubtitleStream(stream));
+                        break;
+                }
+            }
+
+            return technical;
+        }
+
+        private static VideoStreamInfo ParseVideoStream(JsonElement stream, TimeSpan? formatDuration)
+        {
+            var tags = GetObject(stream, "tags");
+            var sideData = GetArray(stream, "side_data");
+            var masteringDisplay = sideData.FirstOrDefault(item =>
+                (GetString(item, "side_data_type") ?? string.Empty).Contains("mastering", StringComparison.OrdinalIgnoreCase));
+            var contentLight = sideData.FirstOrDefault(item =>
+                (GetString(item, "side_data_type") ?? string.Empty).Contains("content light", StringComparison.OrdinalIgnoreCase));
+            var projection = GetString(tags, "projection") ?? string.Empty;
+            return new VideoStreamInfo
+            {
+                StreamIndex = TryGetInt(stream, "index"),
+                TrackId = GetString(stream, "id") ?? string.Empty,
+                TrackName = GetString(tags, "title") ?? GetString(tags, "handler_name") ?? string.Empty,
+                Language = GetString(tags, "language") ?? string.Empty,
+                Codec = GetString(stream, "codec_long_name") ?? GetString(stream, "codec_name") ?? string.Empty,
+                Profile = GetString(stream, "profile") ?? string.Empty,
+                Level = TryGetInt(stream, "level"),
+                FourCc = GetString(stream, "codec_tag_string") ?? GetString(stream, "codec_tag") ?? string.Empty,
+                Width = TryGetInt(stream, "width"),
+                Height = TryGetInt(stream, "height"),
+                FrameRate = TryGetFrameRate(stream),
+                Bitrate = TryGetLong(stream, "bit_rate"),
+                PixelAspectRatio = GetString(stream, "sample_aspect_ratio") ?? string.Empty,
+                DisplayAspectRatio = GetString(stream, "display_aspect_ratio") ?? string.Empty,
+                Rotation = TryGetRotation(stream),
+                Hdr = GetString(stream, "color_transfer") is { Length: > 0 } transfer
+                    ? transfer.Contains("smpte2084", StringComparison.OrdinalIgnoreCase) || transfer.Contains("arib-std-b67", StringComparison.OrdinalIgnoreCase)
+                        ? transfer
+                        : string.Empty
+                    : string.Empty,
+                ColorSpace = GetString(stream, "color_space") ?? string.Empty,
+                ColorPrimaries = GetString(stream, "color_primaries") ?? string.Empty,
+                TransferCharacteristics = GetString(stream, "color_transfer") ?? string.Empty,
+                MatrixCoefficients = GetString(stream, "color_matrix") ?? string.Empty,
+                MasteringDisplay = masteringDisplay.ValueKind == JsonValueKind.Object
+                    ? masteringDisplay.GetRawText()
+                    : string.Empty,
+                MaxCll = TryGetDecimal(contentLight, "max_content") ?? TryGetDecimal(contentLight, "max_content_light_level"),
+                MaxFall = TryGetDecimal(contentLight, "max_average") ?? TryGetDecimal(contentLight, "max_fall"),
+                Stereo3D = GetString(stream, "stereo_mode") ?? string.Empty,
+                Is360Video = projection.Contains("equirectangular", StringComparison.OrdinalIgnoreCase)
+                    || sideData.Any(item => (GetString(item, "side_data_type") ?? string.Empty)
+                        .Contains("spherical", StringComparison.OrdinalIgnoreCase)),
+                Encoder = GetString(tags, "encoder") ?? GetString(tags, "ENCODER") ?? string.Empty,
+                EncodingSettings = GetString(stream, "bits_per_raw_sample") ?? string.Empty,
+                Duration = TryGetDuration(stream, "duration") ?? formatDuration
+            };
+        }
+
+        private static AudioStreamInfo ParseAudioStream(JsonElement stream, TimeSpan? formatDuration)
+        {
+            var tags = GetObject(stream, "tags");
+            return new AudioStreamInfo
+            {
+                StreamIndex = TryGetInt(stream, "index"),
+                TrackId = GetString(stream, "id") ?? string.Empty,
+                TrackName = GetString(tags, "title") ?? GetString(tags, "handler_name") ?? string.Empty,
+                Language = GetString(tags, "language") ?? string.Empty,
+                Codec = GetString(stream, "codec_long_name") ?? GetString(stream, "codec_name") ?? string.Empty,
+                Profile = GetString(stream, "profile") ?? string.Empty,
+                Bitrate = TryGetLong(stream, "bit_rate"),
+                SampleRate = TryGetInt(stream, "sample_rate"),
+                Channels = TryGetInt(stream, "channels"),
+                ChannelLayout = GetString(stream, "channel_layout") ?? string.Empty,
+                Encoder = GetString(tags, "encoder") ?? GetString(tags, "ENCODER") ?? string.Empty,
+                Duration = TryGetDuration(stream, "duration") ?? formatDuration
+            };
+        }
+
+        private static SubtitleStreamInfo ParseSubtitleStream(JsonElement stream)
+        {
+            var tags = GetObject(stream, "tags");
+            return new SubtitleStreamInfo
+            {
+                StreamIndex = TryGetInt(stream, "index"),
+                TrackId = GetString(stream, "id") ?? string.Empty,
+                TrackName = GetString(tags, "title") ?? GetString(tags, "handler_name") ?? string.Empty,
+                Language = GetString(tags, "language") ?? string.Empty,
+                Codec = GetString(stream, "codec_long_name") ?? GetString(stream, "codec_name") ?? string.Empty,
+                IsForced = string.Equals(GetString(tags, "forced"), "1", StringComparison.OrdinalIgnoreCase),
+                IsDefault = string.Equals(GetString(tags, "default"), "1", StringComparison.OrdinalIgnoreCase)
             };
         }
 
@@ -221,7 +339,22 @@ namespace Archivio.ViewModels
                     Duration = properties.Duration > TimeSpan.Zero ? properties.Duration : null,
                     FrameWidth = properties.Width > 0 ? (int)properties.Width : null,
                     FrameHeight = properties.Height > 0 ? (int)properties.Height : null,
-                    VideoBitrate = properties.Bitrate > 0 ? properties.Bitrate : null
+                    VideoBitrate = properties.Bitrate > 0 ? properties.Bitrate : null,
+                    Technical = new VideoTechnicalInfo
+                    {
+                        Duration = properties.Duration > TimeSpan.Zero ? properties.Duration : null,
+                        TotalBitrate = properties.Bitrate > 0 ? properties.Bitrate : null,
+                        VideoStreams = new List<VideoStreamInfo>
+                        {
+                            new()
+                            {
+                                Width = properties.Width > 0 ? (int)properties.Width : null,
+                                Height = properties.Height > 0 ? (int)properties.Height : null,
+                                Bitrate = properties.Bitrate > 0 ? properties.Bitrate : null,
+                                Duration = properties.Duration > TimeSpan.Zero ? properties.Duration : null
+                            }
+                        }
+                    }
                 };
             }
             catch (Exception ex)
@@ -244,6 +377,38 @@ namespace Archivio.ViewModels
                 JsonValueKind.Number => value.GetRawText(),
                 _ => null
             };
+        }
+
+        private static JsonElement GetObject(JsonElement element, string propertyName)
+        {
+            return element.ValueKind == JsonValueKind.Object
+                && element.TryGetProperty(propertyName, out var value)
+                && value.ValueKind == JsonValueKind.Object
+                ? value
+                : default;
+        }
+
+        private static JsonElement[] GetArray(JsonElement element, string propertyName)
+        {
+            return element.ValueKind == JsonValueKind.Object
+                && element.TryGetProperty(propertyName, out var value)
+                && value.ValueKind == JsonValueKind.Array
+                ? value.EnumerateArray().ToArray()
+                : Array.Empty<JsonElement>();
+        }
+
+        private static int? TryGetRotation(JsonElement stream)
+        {
+            var tags = GetObject(stream, "tags");
+            return TryGetInt(tags, "rotate") ?? TryGetInt(stream, "rotation");
+        }
+
+        private static decimal? TryGetDecimal(JsonElement element, string propertyName)
+        {
+            var value = GetString(element, propertyName);
+            return decimal.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+                ? number
+                : null;
         }
 
         private static int? TryGetInt(JsonElement element, string propertyName)
