@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Text.Json;
 using Archivio.Helpers;
 using Archivio.ViewModels;
 using Microsoft.UI.Xaml;
@@ -15,8 +16,99 @@ namespace Archivio.Models
     public sealed class VideoFileItem : ViewModelBase
     {
         private readonly HashSet<string> _dirtyCustomMetadataFieldIds = new(StringComparer.Ordinal);
+        private string _originalStructuredMetadataJson = string.Empty;
+        private MetadataDocument _structuredMetadata = new();
+
         /// <summary>動画ファイルから読み込んだArchivio共通メタデータ。既存プロパティとの互換用に併存する。</summary>
-        public MetadataDocument StructuredMetadata { get; set; } = new();
+        public MetadataDocument StructuredMetadata
+        {
+            get => _structuredMetadata;
+            set
+            {
+                var next = value ?? new MetadataDocument();
+                if (ReferenceEquals(_structuredMetadata, next))
+                {
+                    return;
+                }
+
+                _structuredMetadata = next;
+                OnPropertyChanged();
+                // 一覧・詳細画面はこのプロパティ配下の値へバインドしているため、
+                // 保存後のファイル再読込時に親プロパティの変更を通知する。
+                OnPropertyChanged(nameof(CastCreditsText));
+                OnPropertyChanged(nameof(CrewCreditsText));
+            }
+        }
+        /// <summary>FFprobe等で取得した全ストリームの技術情報。保存対象外。</summary>
+        public VideoTechnicalInfo TechnicalInfo { get; private set; } = new();
+
+        public void SetTechnicalInfo(VideoTechnicalInfo value)
+        {
+            TechnicalInfo = value ?? new VideoTechnicalInfo();
+            OnPropertyChanged(nameof(TechnicalInfo));
+        }
+
+        /// <summary>画面編集用の出演者表現。保存時は構造化された出演者・役名・主演へ戻す。</summary>
+        public string CastCreditsText
+        {
+            get => string.Join("; ", StructuredMetadata.PeopleAndStaff.Cast
+                .OrderBy(credit => credit.Order)
+                .Select(credit => (credit.IsLead ? "*" : string.Empty) +
+                    (string.IsNullOrWhiteSpace(credit.CharacterName)
+                        ? credit.PersonName
+                        : $"{credit.PersonName} ({credit.CharacterName})")));
+            set
+            {
+                StructuredMetadata.PeopleAndStaff.Cast = (value ?? string.Empty)
+                    .Split(new[] { ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select((entry, index) =>
+                    {
+                        var text = entry.Trim();
+                        var isLead = text.StartsWith("*", StringComparison.Ordinal);
+                        if (isLead) text = text[1..].Trim();
+                        var separator = text.LastIndexOf('(');
+                        var hasRole = separator > 0 && text.EndsWith(")", StringComparison.Ordinal);
+                        return new CastCredit
+                        {
+                            PersonName = hasRole ? text[..separator].Trim() : text,
+                            CharacterName = hasRole ? text[(separator + 1)..^1].Trim() : string.Empty,
+                            IsLead = isLead,
+                            Order = index
+                        };
+                    })
+                    .Where(credit => !string.IsNullOrWhiteSpace(credit.PersonName))
+                    .ToList();
+                OnPropertyChanged();
+            }
+        }
+
+        public string CrewCreditsText
+        {
+            get => string.Join("; ", StructuredMetadata.PeopleAndStaff.Crew
+                .OrderBy(credit => credit.Order)
+                .Select(credit => string.IsNullOrWhiteSpace(credit.RoleId)
+                    ? credit.PersonName
+                    : $"{credit.RoleId}: {credit.PersonName}"));
+            set
+            {
+                StructuredMetadata.PeopleAndStaff.Crew = (value ?? string.Empty)
+                    .Split(new[] { ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select((entry, index) =>
+                    {
+                        var text = entry.Trim();
+                        var separator = text.IndexOf(':');
+                        return new CrewCredit
+                        {
+                            RoleId = separator > 0 ? text[..separator].Trim() : string.Empty,
+                            PersonName = separator > 0 ? text[(separator + 1)..].Trim() : text,
+                            Order = index
+                        };
+                    })
+                    .Where(credit => !string.IsNullOrWhiteSpace(credit.PersonName))
+                    .ToList();
+                OnPropertyChanged();
+            }
+        }
 
         public IReadOnlyCollection<string> DirtyCustomMetadataFieldIds => _dirtyCustomMetadataFieldIds;
 
@@ -652,6 +744,7 @@ namespace Archivio.Models
         public bool HasMetadataChanges()
         {
             return _dirtyCustomMetadataFieldIds.Count > 0
+                || !string.Equals(_originalStructuredMetadataJson, SerializeStructuredMetadata(StructuredMetadata), StringComparison.Ordinal)
                 || HasChanges(nameof(Title))
                 || HasChanges(nameof(Participants))
                 || HasChanges(nameof(Category))
@@ -679,6 +772,7 @@ namespace Archivio.Models
                 _originalValues[nameof(ContentDistributor)] = _contentDistributor;
                 _originalValues[nameof(Publisher)] = _publisher;
                 _originalValues[nameof(ReleaseDate)] = _releaseDate.ToString("yyyy-MM-dd");
+                _originalStructuredMetadataJson = SerializeStructuredMetadata(StructuredMetadata);
 
                 HasPendingChangesNotify();
             }
@@ -763,6 +857,7 @@ namespace Archivio.Models
                 _originalValues[nameof(ContentDistributor)] = snapshot.ContentDistributor ?? string.Empty;
                 _originalValues[nameof(Publisher)] = snapshot.Publisher ?? string.Empty;
                 _originalValues[nameof(ReleaseDate)] = snapshot.ReleaseDate.ToString("yyyy-MM-dd");
+                _originalStructuredMetadataJson = SerializeStructuredMetadata(snapshot.StructuredMetadata);
                 HasPendingChangesNotify();
             }
             finally
@@ -790,7 +885,25 @@ namespace Archivio.Models
             
             bool releaseDateChanged = HasReleaseDateChanged(_releaseDate, snapshot.ReleaseDate);
 
-            return titleChanged || participantsChanged || commentChanged || categoryChanged || catalogNumberChanged || ratingChanged || contentDistributorChanged || publisherChanged || releaseDateChanged;
+            return titleChanged || participantsChanged || commentChanged || categoryChanged || catalogNumberChanged || ratingChanged || contentDistributorChanged || publisherChanged || releaseDateChanged
+                || HasStructuredMetadataChangesComparedTo(snapshot.StructuredMetadata);
+        }
+
+        /// <summary>
+        /// 画面互換用の単純項目に含まれない、サブタイトル・入手元などの変更を検出します。
+        /// これを行わないと、保存前の再読み込み判定で「変更なし」と誤判定されます。
+        /// </summary>
+        public bool HasStructuredMetadataChangesComparedTo(MetadataDocument? original)
+        {
+            return !string.Equals(
+                SerializeStructuredMetadata(StructuredMetadata),
+                SerializeStructuredMetadata(original),
+                StringComparison.Ordinal);
+        }
+
+        private static string SerializeStructuredMetadata(MetadataDocument? document)
+        {
+            return JsonSerializer.Serialize(document ?? new MetadataDocument(), new JsonSerializerOptions { WriteIndented = false });
         }
 
         private static bool ArePerformersEqual(string? p1, string? p2)

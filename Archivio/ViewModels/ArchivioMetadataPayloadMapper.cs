@@ -22,7 +22,7 @@ namespace Archivio.ViewModels
             ArgumentNullException.ThrowIfNull(document);
             return new ArchivioMetadataPayload
             {
-                SchemaVersion = string.IsNullOrWhiteSpace(document.SchemaVersion) ? "1" : document.SchemaVersion,
+                SchemaVersion = "2",
                 OriginalTitle = document.Work.OriginalTitle ?? string.Empty,
                 Subtitle = document.Work.Subtitle ?? string.Empty,
                 AlternateTitles = document.Work.AlternateTitles ?? new(),
@@ -30,6 +30,13 @@ namespace Archivio.ViewModels
                 Series = document.Series ?? new(),
                 ArchivioId = document.Identifiers.ArchivioId ?? string.Empty,
                 SourceFileId = document.Identifiers.SourceFileId ?? string.Empty,
+                Work = document.Work,
+                PeopleAndStaff = document.PeopleAndStaff,
+                Dates = document.Dates,
+                Identifiers = document.Identifiers,
+                Acquisition = document.Acquisition,
+                Rights = document.Rights,
+                Location = document.Location,
                 Evaluation = document.Evaluation ?? new(),
                 CustomFields = document.CustomFields ?? new(StringComparer.Ordinal)
             };
@@ -40,6 +47,19 @@ namespace Archivio.ViewModels
             ArgumentNullException.ThrowIfNull(document);
             ArgumentNullException.ThrowIfNull(payload);
             document.SchemaVersion = string.IsNullOrWhiteSpace(payload.SchemaVersion) ? "1" : payload.SchemaVersion;
+            if (payload.SchemaVersion == "2")
+            {
+                document.Work = payload.Work ?? new WorkMetadata();
+                document.PeopleAndStaff = payload.PeopleAndStaff ?? new PeopleAndStaffMetadata();
+                document.Dates = payload.Dates ?? new MetadataDates();
+                document.Identifiers = payload.Identifiers ?? new IdentifierMetadata();
+                document.Acquisition = payload.Acquisition ?? new AcquisitionMetadata();
+                document.Rights = payload.Rights ?? new RightsMetadata();
+                document.Location = payload.Location ?? new LocationMetadata();
+                document.Evaluation = payload.Evaluation ?? new EvaluationMetadata();
+                document.CustomFields = payload.CustomFields ?? new(StringComparer.Ordinal);
+                return;
+            }
             document.Work.OriginalTitle = payload.OriginalTitle ?? string.Empty;
             document.Work.Subtitle = payload.Subtitle ?? string.Empty;
             document.Work.AlternateTitles = payload.AlternateTitles ?? new();
@@ -103,7 +123,13 @@ namespace Archivio.ViewModels
         internal static bool HasData(MetadataDocument document)
         {
             var payload = FromDocument(document);
-            return !string.IsNullOrWhiteSpace(payload.OriginalTitle)
+            return !string.IsNullOrWhiteSpace(payload.Work.Title)
+                || !string.IsNullOrWhiteSpace(payload.Work.Subtitle)
+                || !string.IsNullOrWhiteSpace(payload.Work.Description)
+                || payload.PeopleAndStaff.Cast.Count > 0
+                || payload.PeopleAndStaff.Crew.Count > 0
+                || payload.Dates.ReleaseDate is not null
+                || !string.IsNullOrWhiteSpace(payload.OriginalTitle)
                 || !string.IsNullOrWhiteSpace(payload.Subtitle)
                 || payload.AlternateTitles.Count > 0
                 || payload.Cast.Count > 0
@@ -123,9 +149,18 @@ namespace Archivio.ViewModels
 
         internal static bool IsPayloadFieldId(string fieldId)
         {
-            return fieldId is "work.original-title" or "work.subtitle" or "work.alternate-titles"
+            return fieldId is "work.title" or "work.subtitle" or "work.original-title" or "work.alternate-titles"
+                or "work.description" or "work.synopsis" or "work.keywords" or "work.genres" or "work.content-type"
                 or "credits.cast" or "series.name" or "series.season-number" or "series.episode-number"
                 or "series.episode-title" or "series.episode-id" or "series.network"
+                or "credits.crew" or "credits.production-companies" or "credits.distributors" or "credits.publishers"
+                or "series.season-count" or "series.episode-count" or "series.publication-year" or "series.part-number"
+                or "dates.release" or "dates.recording" or "dates.filming" or "dates.purchased" or "dates.archivio-registered" or "dates.archivio-updated"
+                or "evaluation.content-rating" or "evaluation.personal-notes"
+                or "identifiers.barcode" or "identifiers.imdb" or "identifiers.tmdb" or "identifiers.tvdb"
+                or "acquisition.price" or "acquisition.currency" or "acquisition.seller" or "acquisition.url" or "acquisition.source" or "acquisition.original-media"
+                or "rights.copyright-holder" or "rights.license" or "rights.source"
+                or "location.filming" or "location.country"
                 or "identifiers.archivio-id" or "identifiers.source-file-id"
                 or "evaluation.view-count" or "evaluation.favorite" or "evaluation.watched"
                 or "evaluation.watched-at" or "evaluation.playback-position"

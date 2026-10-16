@@ -13,6 +13,8 @@ namespace Archivio.ViewModels
     {
         private static readonly IReadOnlyDictionary<string, PropertyInfo> ListValueProperties = CreatePropertyMap(
             field => field.ListBindingPath);
+        private static readonly IReadOnlyDictionary<string, string> ListValuePaths = CreatePathMap(
+            field => field.ListBindingPath ?? field.DetailsBindingPath);
         private static readonly IReadOnlyDictionary<string, PropertyInfo> SortValueProperties = CreatePropertyMap(
             field => field.SortBindingPath ?? field.ListBindingPath);
         private static string[] GetGlobalSearchFieldIds() => MetadataFieldCatalog.All
@@ -56,7 +58,6 @@ namespace Archivio.ViewModels
         public List<string> GetUniqueValuesForProperty(IEnumerable<VideoFileItem> source, string propertyName)
         {
             return source.Select(v => GetPropertyValueString(v, propertyName))
-                         .Where(s => !string.IsNullOrWhiteSpace(s))
                          .Distinct(StringComparer.OrdinalIgnoreCase)
                          .OrderBy(s => s)
                          .ToList();
@@ -127,11 +128,30 @@ namespace Archivio.ViewModels
             return properties;
         }
 
+        private static Dictionary<string, string> CreatePathMap(Func<MetadataFieldDefinition, string?> getPath)
+        {
+            return MetadataFieldCatalog.All
+                .Select(field => (field.Id, Path: getPath(field)))
+                .Where(item => !string.IsNullOrWhiteSpace(item.Path))
+                .ToDictionary(item => item.Id, item => item.Path!, StringComparer.Ordinal);
+        }
+
         private static string GetPropertyValueString(VideoFileItem item, string fieldId)
         {
             if (ListValueProperties.TryGetValue(fieldId, out var property))
             {
-                return property.GetValue(item)?.ToString() ?? string.Empty;
+                return FormatPropertyValue(property.GetValue(item));
+            }
+
+            if (ListValuePaths.TryGetValue(fieldId, out var path))
+            {
+                object? nestedValue = item;
+                foreach (var segment in path.Split('.'))
+                {
+                    nestedValue = nestedValue?.GetType().GetProperty(segment)?.GetValue(nestedValue);
+                }
+
+                return FormatPropertyValue(nestedValue);
             }
 
             if (MetadataFieldCatalog.FindById(fieldId) is { IsCustom: true }
@@ -147,6 +167,16 @@ namespace Archivio.ViewModels
             }
 
             return string.Empty;
+        }
+
+        private static string FormatPropertyValue(object? value)
+        {
+            if (value is IEnumerable<string> values)
+            {
+                return string.Join("; ", values);
+            }
+
+            return value?.ToString() ?? string.Empty;
         }
     }
 }

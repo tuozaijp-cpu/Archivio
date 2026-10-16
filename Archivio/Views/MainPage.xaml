@@ -9,9 +9,19 @@
     xmlns:models="using:Archivio.Models"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    mc:Ignorable="d">
+    mc:Ignorable="d"
+    KeyDown="MainPage_KeyDown"
+    IsTabStop="True">
 
     <Page.Resources>
+        <DataTemplate x:Key="ListThumbnailCellTemplate">
+            <Grid Width="48" Height="40" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Image Source="{Binding ThumbnailImage}"
+                       Width="48"
+                       Height="40"
+                       Stretch="Uniform" />
+            </Grid>
+        </DataTemplate>
         <Style x:Key="FilteringColumnHeaderStyle" TargetType="primitives:DataGridColumnHeader">
             <Setter Property="ContentTemplate">
                 <Setter.Value>
@@ -34,7 +44,7 @@
                                                 <ItemsControl x:Name="ValuesItemsControl">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
-                                                            <CheckBox Content="{Binding Value}" IsChecked="{Binding IsChecked, Mode=TwoWay}" Margin="0,2" />
+                                                            <CheckBox Content="{Binding DisplayValue}" IsChecked="{Binding IsChecked, Mode=TwoWay}" Margin="0,2" />
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>
@@ -62,11 +72,10 @@
             <RowDefinition x:Name="DetailsRow" Height="2*" MinHeight="150" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
-            <StackPanel
-                Grid.Column="0"
-                Orientation="Horizontal"
-                Spacing="8">
+        <Grid Grid.Row="0" RowDefinitions="Auto,Auto" RowSpacing="8">
+            <!-- フォルダ操作・検索・表示・設定を1行に集約 -->
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <Button
                     x:Name="ChooseFolderButton"
                     Click="ChooseFolderButton_Click"
@@ -82,72 +91,88 @@
                     ToolTipService.ToolTip=""
                     OnContent=""
                     OffContent="" />
-                <TextBox
-                    x:Name="SearchTextBox"
-                    Width="420"
-                    PlaceholderText=""
-                    Text="{x:Bind ViewModel.FilterText, Mode=TwoWay}"
-                    TextChanged="FilterTextBox_TextChanged"
-                    ToolTipService.ToolTip="" />
-                <Button
-                    x:Name="ExportCsvButton"
-                    Click="ExportCsvButton_Click"
-                    Content=""
-                    IsEnabled="{x:Bind ViewModel.CanExportCsv, Mode=OneWay}" />
-                <Button
-                    x:Name="ConfigureColumnsButton"
-                    Click="ConfigureColumnsButton_Click"
-                    Content="" />
-                <Button
-                    x:Name="ConfigureDetailsButton"
-                    Click="ConfigureDetailsButton_Click"
-                    Content="" />
-                <Button
-                    x:Name="ConfigureCustomFieldsButton"
-                    Click="ConfigureCustomFieldsButton_Click"
-                    Content="Custom Fields" />
-                <Button
-                    x:Name="CancelRefreshButton"
-                    Click="CancelRefreshButton_Click"
-                    Content=""
-                    IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
-            </StackPanel>
+                </StackPanel>
 
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBox
+                        x:Name="SearchTextBox"
+                        Width="420"
+                        PlaceholderText=""
+                        Text="{x:Bind ViewModel.FilterText, Mode=TwoWay}"
+                        TextChanged="FilterTextBox_TextChanged"
+                        ToolTipService.ToolTip="" />
+                    <Button
+                        x:Name="ExportCsvButton"
+                        Click="ExportCsvButton_Click"
+                        Content=""
+                        IsEnabled="{x:Bind ViewModel.CanExportCsv, Mode=OneWay}" />
+                </StackPanel>
+
+                <ScrollViewer
+                    Grid.Column="2"
+                    HorizontalScrollBarVisibility="Auto"
+                    HorizontalScrollMode="Enabled"
+                    VerticalScrollBarVisibility="Hidden"
+                    VerticalScrollMode="Disabled">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Button
+                        x:Name="ConfigureColumnsButton"
+                        Click="ConfigureColumnsButton_Click"
+                        Content="" />
+                    <Button
+                        x:Name="ConfigureDetailsButton"
+                        Click="ConfigureDetailsButton_Click"
+                        Content="" />
+                    <Button
+                        x:Name="ConfigureCustomFieldsButton"
+                        Click="ConfigureCustomFieldsButton_Click"
+                        Content="Custom Fields" />
+                    <CheckBox
+                        x:Name="DirectFileWriteModeCheckBox"
+                        Click="DirectFileWriteModeCheckBox_Click"
+                        VerticalAlignment="Center" />
+                    <Button
+                        x:Name="CancelRefreshButton"
+                        Click="CancelRefreshButton_Click"
+                        Content=""
+                        IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                    <ToggleButton
+                        x:Name="DetailViewToggleButton"
+                        IsChecked="{x:Bind ViewModel.IsDetailView, Mode=OneWay}"
+                        Click="DetailViewToggleButton_Click"
+                        Content="" />
+                    <ToggleButton
+                        x:Name="ThumbnailViewToggleButton"
+                        IsChecked="{x:Bind ViewModel.IsThumbnailView, Mode=OneWay}"
+                        Click="ThumbnailViewToggleButton_Click"
+                        Content="" />
+                    <ComboBox
+                        x:Name="ThumbnailTileSizeComboBox"
+                        Width="100"
+                        SelectedIndex="{x:Bind ViewModel.ThumbnailTileSizeIndex, Mode=TwoWay}"
+                        ToolTipService.ToolTip="">
+                        <ComboBoxItem Content="" />
+                        <ComboBoxItem Content="" />
+                        <ComboBoxItem Content="" />
+                        <ComboBoxItem Content="" />
+                    </ComboBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- 処理状態。操作ボタン列とは分離して表示する。 -->
             <Border
-                Grid.Column="1"
-                Margin="12,0,0,0"
+                Grid.Row="1"
+                Height="40"
                 Padding="8,4"
                 CornerRadius="4"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                Visibility="{x:Bind ViewModel.StatusMessageVisibility, Mode=OneWay}">
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                 <TextBlock
                     MaxWidth="420"
                     Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
-                    TextWrapping="WrapWholeWords" />
-                </Border>
-
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                <ToggleButton
-                    x:Name="DetailViewToggleButton"
-                    IsChecked="{x:Bind ViewModel.IsDetailView, Mode=OneWay}"
-                    Click="DetailViewToggleButton_Click"
-                    Content="" />
-                <ToggleButton
-                    x:Name="ThumbnailViewToggleButton"
-                    IsChecked="{x:Bind ViewModel.IsThumbnailView, Mode=OneWay}"
-                    Click="ThumbnailViewToggleButton_Click"
-                    Content="" />
-                <ComboBox
-                    x:Name="ThumbnailTileSizeComboBox"
-                    Width="100"
-                    SelectedIndex="{x:Bind ViewModel.ThumbnailTileSizeIndex, Mode=TwoWay}"
-                    ToolTipService.ToolTip="">
-                    <ComboBoxItem Content="" />
-                    <ComboBoxItem Content="" />
-                    <ComboBoxItem Content="" />
-                    <ComboBoxItem Content="" />
-                </ComboBox>
-            </StackPanel>
+                    TextWrapping="WrapWholeWords"
+                    VerticalAlignment="Center" />
+            </Border>
         </Grid>
 
         <!-- Row 1: Video File List -->
@@ -188,6 +213,7 @@
                     <controls:DataGrid.ContextFlyout>
                         <MenuFlyout>
                             <MenuFlyoutItem x:Name="RenameMenuItem" Text="" Click="RenameMenuItem_Click" />
+                            <MenuFlyoutItem x:Name="RenameFromMetadataMenuItem" Text="" Click="RenameFromMetadataMenuItem_Click" />
                             <MenuFlyoutItem x:Name="DeleteMenuItem" Text="" Click="DeleteMenuItem_Click" />
                             <MenuFlyoutItem x:Name="ReMuxMenuItem" Text="" Click="ReMuxMenuItem_Click" />
                             <MenuFlyoutSeparator />
@@ -274,6 +300,7 @@
         <Grid Grid.Row="3" Margin="0,12,0,0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             <TextBlock
@@ -284,7 +311,81 @@
                 FontWeight="SemiBold"
                 Text="" />
 
-            <Grid Grid.Row="1" Visibility="{x:Bind ViewModel.DetailedPanelVisibility, Mode=OneWay}">
+            <!-- 詳細画面の操作はスクロール領域の外に固定する。 -->
+            <ScrollViewer
+                Grid.Row="1"
+                Margin="0,0,0,8"
+                HorizontalScrollBarVisibility="Auto"
+                HorizontalScrollMode="Enabled"
+                VerticalScrollBarVisibility="Hidden"
+                VerticalScrollMode="Disabled">
+                <Grid ColumnDefinitions="6*,12,5*,12,4*" MinWidth="720">
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                        <ToggleButton
+                            x:Name="VideoPlaybackToggleButton"
+                            Content=""
+                            IsChecked="False"
+                            Click="VideoPlaybackToggleButton_Click" />
+                        <ToggleButton
+                            x:Name="CoverArtViewToggleButton"
+                            Content=""
+                            IsChecked="True"
+                            Click="CoverArtViewToggleButton_Click" />
+                        <Button
+                            x:Name="CaptureFrameButton"
+                            Content=""
+                            Click="CaptureFrameButton_Click" />
+                        <Button
+                            x:Name="CreateThumbnailSheetButton"
+                            Content=""
+                            Click="CreateThumbnailSheetButton_Click" />
+                        <ProgressRing
+                            x:Name="ThumbnailSheetProgressRing"
+                            Width="20"
+                            Height="20"
+                            IsActive="False"
+                            Visibility="Collapsed"
+                            VerticalAlignment="Center" />
+                        <Button
+                            x:Name="AddImageButton"
+                            Content=""
+                            Click="AddImageButton_Click"
+                            IsEnabled="{x:Bind ViewModel.IsVideoSelected, Mode=OneWay}" />
+                        <Button
+                            x:Name="ReplaceImageButton"
+                            Content=""
+                            Click="ReplaceImageButton_Click"
+                            IsEnabled="{x:Bind ViewModel.SelectedVideo.IsImageControlsEnabled, Mode=OneWay}" />
+                        <Button
+                            x:Name="DeleteImageButton"
+                            Content=""
+                            Click="DeleteImageButton_Click"
+                            IsEnabled="{x:Bind ViewModel.SelectedVideo.IsImageControlsEnabled, Mode=OneWay}" />
+                        <Button
+                            x:Name="SaveImageButton"
+                            Content=""
+                            Click="SaveImageButton_Click"
+                            IsEnabled="{x:Bind ViewModel.SelectedVideo.HasCoverArtChangesNotify, Mode=OneWay}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="4" HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
+                        <Button
+                            x:Name="SaveMetadataButton"
+                            Content=""
+                            Click="OnSaveClicked"
+                            IsEnabled="{x:Bind ViewModel.SelectedVideo.HasMetadataChangesNotify, Mode=OneWay}" />
+                        <ComboBox
+                            x:Name="DetailFieldColumnsComboBox"
+                            Width="100"
+                            SelectionChanged="DetailFieldColumnsComboBox_SelectionChanged"
+                            ToolTipService.ToolTip="">
+                            <ComboBoxItem Content="" />
+                            <ComboBoxItem Content="" />
+                        </ComboBox>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <Grid Grid.Row="2" Visibility="{x:Bind ViewModel.DetailedPanelVisibility, Mode=OneWay}">
                 <Grid.ColumnDefinitions>
                     <!-- Left: Large Cover Art Area (6*) -->
                     <ColumnDefinition x:Name="CoverArtColumn" Width="6*" MinWidth="200" />
@@ -298,14 +399,11 @@
 
                 <!-- Left Panel: Cover Art FlipView and its associated edit toolbar -->
                 <Grid x:Name="CoverArtPane" Grid.Column="0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
                     <Border
-                        Grid.Row="0"
                         DoubleTapped="CoverArt_DoubleTapped"
+                        AllowDrop="True"
+                        DragOver="CoverArt_DragOver"
+                        Drop="CoverArt_Drop"
                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1"
@@ -347,44 +445,6 @@
                         </Grid>
                     </Border>
 
-                    <!-- Image edit toolbar aligned beneath the image frame -->
-                    <StackPanel
-                        Grid.Row="1"
-                        Margin="0,8,0,0"
-                        Orientation="Horizontal"
-                        HorizontalAlignment="Center"
-                        Spacing="12">
-                        <ToggleButton
-                            x:Name="VideoPlaybackToggleButton"
-                            Content=""
-                            IsChecked="False"
-                            Click="VideoPlaybackToggleButton_Click" />
-                        <ToggleButton
-                            x:Name="CoverArtViewToggleButton"
-                            Content=""
-                            IsChecked="True"
-                            Click="CoverArtViewToggleButton_Click" />
-                        <Button
-                            x:Name="AddImageButton"
-                            Content=""
-                            Click="AddImageButton_Click"
-                            IsEnabled="{x:Bind ViewModel.IsVideoSelected, Mode=OneWay}" />
-                        <Button
-                            x:Name="ReplaceImageButton"
-                            Content=""
-                            Click="ReplaceImageButton_Click"
-                            IsEnabled="{x:Bind ViewModel.SelectedVideo.IsImageControlsEnabled, Mode=OneWay}" />
-                        <Button
-                            x:Name="DeleteImageButton"
-                            Content=""
-                            Click="DeleteImageButton_Click"
-                            IsEnabled="{x:Bind ViewModel.SelectedVideo.IsImageControlsEnabled, Mode=OneWay}" />
-                        <Button
-                            x:Name="SaveImageButton"
-                            Content=""
-                            Click="SaveImageButton_Click"
-                            IsEnabled="{x:Bind ViewModel.SelectedVideo.HasCoverArtChangesNotify, Mode=OneWay}" />
-                    </StackPanel>
                 </Grid>
 
                 <!-- Vertical GridSplitter between Cover Art and Properties Panel -->
@@ -403,8 +463,14 @@
                 </controls:GridSplitter>
 
                 <!-- Right Panel: Scrollable Editable Properties -->
-                <ScrollViewer Grid.Column="2">
-                    <StackPanel x:Name="EditableMetadataFieldsPanel" Spacing="12" Padding="0,0,12,0">
+                <Grid Grid.Column="2">
+                    <ScrollViewer>
+                        <Grid
+                            x:Name="EditableMetadataFieldsPanel"
+                            ColumnDefinitions="*"
+                            RowSpacing="12"
+                            ColumnSpacing="12"
+                            Padding="0,0,12,0">
                         <ComboBox
                             x:Name="RatingComboBox"
                             Header=""
@@ -417,14 +483,9 @@
                             <ComboBoxItem Content="" />
                             <ComboBoxItem Content="" />
                         </ComboBox>
-                        <Button
-                            x:Name="SaveMetadataButton"
-                            HorizontalAlignment="Left"
-                            Content=""
-                            Click="OnSaveClicked"
-                            IsEnabled="{x:Bind ViewModel.SelectedVideo.HasMetadataChangesNotify, Mode=OneWay}" />
-                    </StackPanel>
-                </ScrollViewer>
+                        </Grid>
+                    </ScrollViewer>
+                </Grid>
 
                 <!-- Vertical GridSplitter between Properties Panel and Technical Properties Panel -->
                 <controls:GridSplitter

@@ -35,6 +35,13 @@ namespace Archivio.ViewModels
             // 埋め込みArchivioペイロードを読み込んだスナップショットでは、独自項目を保持したまま
             // 画面互換用の標準項目だけを更新する。
             var document = snapshot.StructuredMetadata ?? new MetadataDocument();
+            document.Work ??= new WorkMetadata();
+            document.PeopleAndStaff ??= new PeopleAndStaffMetadata();
+            document.Series ??= new SeriesMetadata();
+            document.Dates ??= new MetadataDates();
+            document.Evaluation ??= new EvaluationMetadata();
+            document.Identifiers ??= new IdentifierMetadata();
+            document.CustomFields ??= new Dictionary<string, MetadataValue>(StringComparer.Ordinal);
             document.Work.Title = snapshot.Title ?? string.Empty;
             document.Work.Comment = snapshot.Comment ?? string.Empty;
             document.Work.Genres = SplitValues(snapshot.Category);

@@ -138,13 +138,24 @@ namespace Archivio.ViewModels
                 ArchivioMetadataPayload? archivioPayloadToVerify = null;
                 VideoMetadataSnapshot? reloadedMetadata = null;
                 string? temporaryPath = null;
+                string? workingPath = null;
+                var directWriteMode = SettingsManager.LoadSettings().UseDirectFileWriteMode;
                 FileVersion? originalVersion = null;
 
                 try
                 {
                     originalVersion = ReadFileVersion(file.Path);
-                    temporaryPath = CreateTemporaryPath(file.Path);
-                    System.IO.File.Copy(file.Path, temporaryPath, overwrite: false);
+                    if (directWriteMode)
+                    {
+                        // 高速モードではバックアップも一時ファイルも作成しない。
+                        workingPath = file.Path;
+                    }
+                    else
+                    {
+                        temporaryPath = CreateTemporaryPath(file.Path);
+                        System.IO.File.Copy(file.Path, temporaryPath, overwrite: false);
+                        workingPath = temporaryPath;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -187,12 +198,12 @@ namespace Archivio.ViewModels
 
                 try
                 {
-                    if (temporaryPath is null)
+                    if (workingPath is null)
                     {
-                        throw new InvalidOperationException("保存用一時ファイルを作成できませんでした。");
+                        throw new InvalidOperationException("保存対象ファイルを準備できませんでした。");
                     }
 
-                    using var tagFile = TagLib.File.Create(temporaryPath);
+                    using var tagFile = TagLib.File.Create(workingPath);
                     if (tagFile.Tag is null)
                     {
                         fatalErrors.Add(LanguageManager.GetString("Msg_EmbeddedTagsUnavailable"));
@@ -229,23 +240,19 @@ namespace Archivio.ViewModels
                     fatalErrors.Add(LanguageManager.GetString("Msg_SaveError", ex.Message));
                 }
 
-                if (archivioPayloadToVerify is not null && fatalErrors.Count == 0)
-                {
-                    try
-                    {
-                        VerifyArchivioMetadata(temporaryPath!, adapter, archivioPayloadToVerify);
-                    }
-                    catch (Exception ex)
-                    {
-                        archivioMetadataErrors.Add(ex.Message);
-                    }
-                }
-
                 if (fieldsToPersist.Count > 0 && fatalErrors.Count == 0)
                 {
                     try
                     {
-                        VerifyEmbeddedMetadata(temporaryPath!, metadata, fieldsToPersist, adapter);
+                        // 一時ファイルの検証と保存後に返すメタデータの生成を同じ読み込みで行う。
+                        // 外付けドライブでは、検証と再読み込みを別々に行うと動画全体を何度も
+                        // 読み込むことになるため、保存後の再読み込みを省略できるようにする。
+                        reloadedMetadata = VerifyAndReadMetadataSnapshot(
+                            workingPath!,
+                            adapter,
+                            metadata,
+                            fieldsToPersist,
+                            archivioPayloadToVerify);
                     }
                     catch (Exception ex)
                     {
@@ -257,9 +264,11 @@ namespace Archivio.ViewModels
                 {
                     try
                     {
-                        EnsureFileUnchanged(file.Path, originalVersion!);
-                        CommitTemporaryFile(temporaryPath!, file.Path);
-                        reloadedMetadata = ReadMetadataSnapshot(file.Path, adapter);
+                        if (!directWriteMode)
+                        {
+                            EnsureFileUnchanged(file.Path, originalVersion!);
+                            CommitTemporaryFile(temporaryPath!, file.Path);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -382,12 +391,23 @@ namespace Archivio.ViewModels
             return await Task.Run(() =>
             {
                 string? temporaryPath = null;
+                string? workingPath = null;
+                var directWriteMode = SettingsManager.LoadSettings().UseDirectFileWriteMode;
                 try
                 {
                     var originalVersion = ReadFileVersion(file.Path);
-                    temporaryPath = CreateTemporaryPath(file.Path);
-                    System.IO.File.Copy(file.Path, temporaryPath, overwrite: false);
-                    using (var tagFile = TagLib.File.Create(temporaryPath))
+                    if (directWriteMode)
+                    {
+                        workingPath = file.Path;
+                    }
+                    else
+                    {
+                        temporaryPath = CreateTemporaryPath(file.Path);
+                        System.IO.File.Copy(file.Path, temporaryPath, overwrite: false);
+                        workingPath = temporaryPath;
+                    }
+
+                    using (var tagFile = TagLib.File.Create(workingPath))
                     {
                         var pictures = new List<IPicture>();
                         foreach (var coverArt in coverArtImages ?? Array.Empty<CoverArtImageData>())
@@ -403,10 +423,13 @@ namespace Archivio.ViewModels
                         tagFile.Tag.Pictures = pictures.ToArray();
                         tagFile.Save();
                     }
-                    VerifyCoverArt(temporaryPath);
-                    EnsureFileUnchanged(file.Path, originalVersion);
-                    CommitTemporaryFile(temporaryPath, file.Path);
-                    var reloaded = ReadCoverArtImages(file.Path);
+                    // 一時ファイルからの読み込みを検証と保存後の表示データ生成に兼用する。
+                    var reloaded = ReadCoverArtImages(workingPath);
+                    if (!directWriteMode)
+                    {
+                        EnsureFileUnchanged(file.Path, originalVersion);
+                        CommitTemporaryFile(temporaryPath!, file.Path);
+                    }
                     return new VideoMetadataOperationResult
                     {
                         Succeeded = true,
@@ -484,6 +507,64 @@ namespace Archivio.ViewModels
             {
                 AppLogger.Error("保存用一時ファイルの削除に失敗しました", ex, path);
             }
+        }
+
+        private static VideoMetadataSnapshot VerifyAndReadMetadataSnapshot(
+            string path,
+            IEmbeddedMetadataFormatAdapter adapter,
+            VideoMetadataSnapshot expected,
+            IEnumerable<string> fields,
+            ArchivioMetadataPayload? expectedArchivioPayload)
+        {
+            using var savedFile = TagLib.File.Create(path);
+            var document = adapter.ReadMetadataDocument(savedFile);
+            var archivioResult = adapter.ReadArchivioMetadata(savedFile);
+
+            if (expectedArchivioPayload is not null)
+            {
+                if (archivioResult.Error is not null || archivioResult.Payload is null)
+                {
+                    throw new InvalidDataException(
+                        archivioResult.Error ?? "Archivio独自メタデータを読み戻せません。");
+                }
+
+                var expectedJson = ArchivioMetadataPayloadMapper.Serialize(expectedArchivioPayload);
+                var actualJson = ArchivioMetadataPayloadMapper.Serialize(archivioResult.Payload);
+                if (!string.Equals(expectedJson, actualJson, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException("Archivio独自メタデータの保存後検証に失敗しました。");
+                }
+            }
+
+            if (archivioResult.Payload is not null)
+            {
+                ArchivioMetadataPayloadMapper.ApplyToDocument(document, archivioResult.Payload);
+            }
+
+            var actual = MetadataDocumentMapper.ToSnapshot(document);
+            foreach (var field in fields)
+            {
+                var matched = field switch
+                {
+                    "Title" => string.Equals(actual.Title, expected.Title, StringComparison.Ordinal),
+                    "Participants" => string.Equals(actual.Participants, expected.Participants, StringComparison.Ordinal),
+                    "Comment" => string.Equals(actual.Comment, expected.Comment, StringComparison.Ordinal),
+                    "Category" => string.Equals(actual.Category, expected.Category, StringComparison.Ordinal),
+                    "CatalogNumber" => string.Equals(actual.CatalogNumber, expected.CatalogNumber, StringComparison.Ordinal),
+                    "Publisher" => string.Equals(actual.Publisher, expected.Publisher, StringComparison.Ordinal),
+                    "ContentDistributor" => string.Equals(actual.ContentDistributor, expected.ContentDistributor, StringComparison.Ordinal),
+                    "Rating" => string.Equals(actual.Rating, expected.Rating, StringComparison.Ordinal),
+                    "ReleaseDate" or "dates.release" => actual.ReleaseDate.Date == expected.ReleaseDate.Date,
+                    _ => true
+                };
+
+                if (!matched)
+                {
+                    throw new InvalidDataException($"{field} が保存後に一致しません。");
+                }
+            }
+
+            return actual;
         }
 
         private static VideoMetadataSnapshot ReadMetadataSnapshot(string path, IEmbeddedMetadataFormatAdapter adapter)

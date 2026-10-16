@@ -308,6 +308,10 @@ namespace Archivio.ViewModels
                 SampleRate = TryGetInt(stream, "sample_rate"),
                 Channels = TryGetInt(stream, "channels"),
                 ChannelLayout = GetString(stream, "channel_layout") ?? string.Empty,
+                Loudness = GetString(tags, "loudness") ?? GetString(tags, "loudness_lufs") ?? string.Empty,
+                ReplayGain = GetString(tags, "replaygain_track_gain") ?? GetString(tags, "replaygain_album_gain") ?? string.Empty,
+                EbuR128Loudness = GetString(tags, "r128_track_gain") ?? GetString(tags, "ebu_r128_loudness") ?? string.Empty,
+                TruePeak = GetString(tags, "true_peak") ?? GetString(tags, "replaygain_track_peak") ?? string.Empty,
                 Encoder = GetString(tags, "encoder") ?? GetString(tags, "ENCODER") ?? string.Empty,
                 Duration = TryGetDuration(stream, "duration") ?? formatDuration
             };

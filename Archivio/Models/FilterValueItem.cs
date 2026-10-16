@@ -7,6 +7,7 @@ namespace Archivio.Models
         private bool _isChecked;
 
         public string Value { get; set; } = string.Empty;
+        public string DisplayValue { get; set; } = string.Empty;
 
         public bool IsChecked
         {

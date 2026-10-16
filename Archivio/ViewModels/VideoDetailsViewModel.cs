@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices.WindowsRuntime;
 using Archivio.Helpers;
 using Archivio.Models;
 using Microsoft.UI.Xaml;
@@ -248,7 +249,9 @@ namespace Archivio.ViewModels
                     var freshMeta = loadResult.Metadata;
 
                     // 登録しようとしている情報（現在のUI値）と再度読み込んだ情報を比較する
-                    bool hasActualChanges = targetVideo.HasMetadataChangesComparedTo(freshMeta);
+                    bool hasActualChanges = targetVideo.HasMetadataChangesComparedTo(freshMeta)
+                        || targetVideo.DirtyCustomMetadataFieldIds.Count > 0
+                        || targetVideo.HasMetadataChanges();
 
                     if (!hasActualChanges)
                     {
@@ -515,6 +518,96 @@ namespace Archivio.ViewModels
             catch (Exception ex)
             {
                 _setError(LanguageManager.GetString("Msg_AddImageFailed", ex.Message), ex, file.Path);
+            }
+        }
+
+        public async Task ImportCoverArtImageAsync(StorageFile file, bool replaceSelected)
+        {
+            if (SelectedVideo is null || file is null)
+            {
+                return;
+            }
+
+            try
+            {
+                using var stream = await file.OpenReadAsync();
+                var bytes = new byte[stream.Size];
+                using var reader = new DataReader(stream);
+                await reader.LoadAsync((uint)stream.Size);
+                reader.ReadBytes(bytes);
+
+                var bitmap = new BitmapImage();
+                stream.Seek(0);
+                await bitmap.SetSourceAsync(stream);
+
+                var image = new CoverArtImageData
+                {
+                    Data = bytes,
+                    MimeType = file.ContentType ?? "image/jpeg",
+                    Description = file.Name
+                };
+                var selectedIndex = SelectedVideo.SelectedCoverArtIndex;
+                if (replaceSelected
+                    && selectedIndex >= 0
+                    && selectedIndex < SelectedVideo.CoverArtImages.Count)
+                {
+                    SelectedVideo.CoverArtImages[selectedIndex] = image;
+                    SelectedVideo.CoverArts[selectedIndex] = bitmap;
+                }
+                else
+                {
+                    SelectedVideo.CoverArtImages.Add(image);
+                    SelectedVideo.CoverArts.Add(bitmap);
+                    SelectedVideo.SelectedCoverArtIndex = SelectedVideo.CoverArts.Count - 1;
+                }
+
+                SelectedVideo.HasCoverArt = true;
+                SelectedVideo.IsCoverArtDirty = true;
+                SelectedVideo.NotifyCoverArtPropertiesChanged();
+                OnPropertyChanged(nameof(HasPendingChanges));
+            }
+            catch (Exception ex)
+            {
+                _setError(
+                    LanguageManager.GetString(replaceSelected
+                        ? "Msg_ReplaceImageFailed"
+                        : "Msg_AddImageFailed", ex.Message),
+                    ex,
+                    file.Path);
+            }
+        }
+
+        public async Task AddGeneratedCoverArtImageAsync(byte[] data, string mimeType, string description)
+        {
+            if (SelectedVideo is null || data is null || data.Length == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                using var stream = new InMemoryRandomAccessStream();
+                await stream.WriteAsync(data.AsBuffer());
+                stream.Seek(0);
+                var bitmap = new BitmapImage();
+                await bitmap.SetSourceAsync(stream);
+
+                SelectedVideo.CoverArtImages.Add(new CoverArtImageData
+                {
+                    Data = data,
+                    MimeType = string.IsNullOrWhiteSpace(mimeType) ? "image/png" : mimeType,
+                    Description = description
+                });
+                SelectedVideo.CoverArts.Add(bitmap);
+                SelectedVideo.HasCoverArt = true;
+                SelectedVideo.SelectedCoverArtIndex = SelectedVideo.CoverArts.Count - 1;
+                SelectedVideo.IsCoverArtDirty = true;
+                SelectedVideo.NotifyCoverArtPropertiesChanged();
+                OnPropertyChanged(nameof(HasPendingChanges));
+            }
+            catch (Exception ex)
+            {
+                _setError(LanguageManager.GetString("Msg_AddImageFailed", ex.Message), ex, null);
             }
         }
 

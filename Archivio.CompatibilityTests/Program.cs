@@ -15,7 +15,6 @@ internal static class Program
     private static int _failed;
     private static string _root = string.Empty;
 
-    [STAThread]
     private static int Main()
     {
         _root = Path.Combine(Path.GetTempPath(), $"Archivio-compat-{Guid.NewGuid():N}");
@@ -30,6 +29,7 @@ internal static class Program
             Run("broken custom payload leaves standard tags readable", TestCorruptCustomPayload);
             Run("technical probe retains multiple audio streams", TestTechnicalStreams);
             Run("legacy settings and snapshot migration", TestLegacyMigration);
+            Run("display visibility and order settings", TestDisplaySettings);
             Run("unknown field IDs are ignored by the catalog", TestUnknownFieldIds);
             Run("external modifications are detected", TestExternalModificationDetection);
             Run("failed save leaves original bytes unchanged", TestFailedSavePreservesOriginal);
@@ -80,6 +80,7 @@ internal static class Program
         snapshot.Title = "Archivio roundtrip 漢字";
         snapshot.Comment = "line one\r\nline two — ✓";
         snapshot.StructuredMetadata.Work.OriginalTitle = "Original title";
+        snapshot.StructuredMetadata.Work.Subtitle = "Subtitle value";
         snapshot.StructuredMetadata.Work.AlternateTitles = new() { "Alias A", "Alias B" };
         snapshot.StructuredMetadata.PeopleAndStaff.Cast = new()
         {
@@ -89,19 +90,22 @@ internal static class Program
         snapshot.StructuredMetadata.Series.Name = "Series";
         snapshot.StructuredMetadata.Series.SeasonNumber = 2;
         snapshot.StructuredMetadata.Series.EpisodeNumber = 4;
+        snapshot.StructuredMetadata.Acquisition.Source = "Acquisition source";
         snapshot.StructuredMetadata.CustomFields["custom.test-note"] = new MetadataValue { Kind = MetadataValueKind.Text, Text = "custom value" };
 
-        var save = store.SaveAsync(storageFile, snapshot, before, new[] { "Title", "Comment", "custom.test-note" }).GetAwaiter().GetResult();
+        var save = store.SaveAsync(storageFile, snapshot, before, new[] { "Title", "Comment", "work.subtitle", "acquisition.source", "custom.test-note" }).GetAwaiter().GetResult();
         Assert(save.Succeeded, $"save failed: {save.Details}");
         var after = store.LoadAsync(storageFile).GetAwaiter().GetResult().Metadata;
         Assert(after.Title == snapshot.Title, "standard title was not restored");
         Assert(after.Comment == snapshot.Comment, "standard comment/newlines were not restored");
         Assert(after.StructuredMetadata.Work.OriginalTitle == "Original title", "custom original title missing");
+        Assert(after.StructuredMetadata.Work.Subtitle == "Subtitle value", "subtitle was not persisted");
         Assert(after.StructuredMetadata.Work.AlternateTitles.SequenceEqual(new[] { "Alias A", "Alias B" }), "alternate titles missing");
         Assert(after.StructuredMetadata.PeopleAndStaff.Cast.Count == 2
             && after.StructuredMetadata.PeopleAndStaff.Cast[0].CharacterName == "Hero"
             && after.StructuredMetadata.PeopleAndStaff.Cast[0].IsLead, "cast credits/roles missing");
         Assert(after.StructuredMetadata.Series.EpisodeNumber == 4, "series values missing");
+        Assert(after.StructuredMetadata.Acquisition.Source == "Acquisition source", "acquisition source was not persisted");
         Assert(after.StructuredMetadata.CustomFields["custom.test-note"].Text == "custom value", "custom value missing");
         using var check = TagLib.File.Create(path);
         Assert(check.Tag.Album == "Preserved album tag", "unrelated standard tag was damaged");
@@ -181,9 +185,11 @@ internal static class Program
     {
         const string legacySettings = """{"ColumnOrder":["Title","ReleaseDateText"],"ColumnWidths":{"Title":210},"VisibleListFieldIds":["work.title","deleted.legacy-id"],"VisibleDetailFieldIds":["work.title"],"DetailFieldOrder":["work.title","dates.release"]}""";
         var settings = JsonSerializer.Deserialize<AppSettings>(legacySettings) ?? throw new InvalidOperationException("legacy settings did not deserialize");
+        SettingsManager.NormalizeMetadataLayoutSettings(settings);
         Assert(settings.ColumnOrder.SequenceEqual(new[] { "Title", "ReleaseDateText" }), "legacy column order changed");
         Assert(settings.ColumnWidths.TryGetValue("Title", out var width) && width == 210, "legacy column width was lost");
-        Assert(settings.VisibleListFieldIds?.Contains("deleted.legacy-id") == true, "unknown user ID was not retained for safe normalization");
+        Assert(settings.ListFieldOrder.SequenceEqual(new[] { "work.title", "dates.release" }), "legacy column order was not migrated to stable IDs");
+        Assert(settings.VisibleListFieldIds?.SequenceEqual(new[] { "work.title" }) == true, "unknown user ID was not safely ignored");
 
         const string oldSnapshot = """{"Title":"Legacy title","Participants":"Actor A; Actor B","Comment":"old comment","ReleaseDate":"2021-03-04T00:00:00+00:00"}""";
         var snapshot = JsonSerializer.Deserialize<VideoMetadataSnapshot>(oldSnapshot) ?? throw new InvalidOperationException("legacy snapshot did not deserialize");
@@ -198,7 +204,23 @@ internal static class Program
         var other = EmbeddedMetadataFormatAdapterSelector.Select("unknown-container.xyz");
         Assert(other.GetFieldCapability("field.from.future-version") == MetadataFieldCapability.Unsupported, "unknown ID was not safely unsupported");
         var oldSettings = JsonSerializer.Deserialize<AppSettings>("""{"ListFieldOrder":["work.title","field.from.future-version"],"DetailFieldOrder":["work.title"]}""")!;
-        Assert(oldSettings.ListFieldOrder.Count == 2, "settings could not deserialize with an unknown ID");
+        SettingsManager.NormalizeMetadataLayoutSettings(oldSettings);
+        Assert(oldSettings.ListFieldOrder.SequenceEqual(new[] { "work.title" }), "unknown ID was not safely ignored");
+    }
+
+    private static void TestDisplaySettings()
+    {
+        var settings = new AppSettings
+        {
+            VisibleListFieldIds = new() { "work.title", "unknown.future" },
+            ListFieldOrder = new() { "dates.release", "work.title", "work.title" },
+            VisibleDetailFieldIds = new() { "artwork.cover", "unknown.future" },
+            DetailFieldOrder = new() { "artwork.cover", "unknown.future" }
+        };
+        SettingsManager.NormalizeMetadataLayoutSettings(settings);
+        Assert(settings.VisibleListFieldIds!.SequenceEqual(new[] { "work.title" }), "visible list IDs were not normalized");
+        Assert(settings.ListFieldOrder.SequenceEqual(new[] { "dates.release", "work.title" }), "list order was not preserved");
+        Assert(settings.VisibleDetailFieldIds!.SequenceEqual(new[] { "artwork.cover" }), "visible detail IDs were not normalized");
     }
 
     private static void TestExternalModificationDetection()
@@ -244,11 +266,12 @@ internal static class Program
         return copy;
     }
 
-    private static StorageFile GetStorageFile(string path) => StorageFile.GetFileFromPathAsync(path).AsTask().GetAwaiter().GetResult();
+    // テスト用のファイル取得は、WinRTの完了通知を待つため同期結果取得を使います。
+    private static StorageFile GetStorageFile(string path) => StorageFile.GetFileFromPathAsync(path).GetResults();
 
     private static void RunFfmpeg(params string[] arguments)
     {
-        var start = new ProcessStartInfo("ffmpeg") { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true, CreateNoWindow = true };
+        var start = new ProcessStartInfo("ffmpeg") { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = false, CreateNoWindow = true };
         start.ArgumentList.Add("-y");
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("ffmpeg did not start");

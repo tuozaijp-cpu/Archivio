@@ -314,7 +314,7 @@ namespace Archivio.ViewModels
                 return MetadataFieldCapability.ReadOnly;
             }
 
-            return GetArchivioFieldName(fieldId) is not null || ArchivioCustomFieldIds.Contains(fieldId) || fieldId.StartsWith("custom.", StringComparison.Ordinal)
+            return GetArchivioFieldName(fieldId) is not null || ArchivioCustomFieldIds.Contains(fieldId) || ArchivioMetadataPayloadMapper.IsPayloadFieldId(fieldId)
                 ? MetadataFieldCapability.ArchivioCustom
                 : base.GetFieldCapability(fieldId);
         }
@@ -378,7 +378,7 @@ namespace Archivio.ViewModels
                 return MetadataFieldCapability.ReadOnly;
             }
 
-            return GetArchivioFieldName(fieldId) is not null || ArchivioCustomFieldIds.Contains(fieldId) || fieldId.StartsWith("custom.", StringComparison.Ordinal)
+            return GetArchivioFieldName(fieldId) is not null || ArchivioCustomFieldIds.Contains(fieldId) || ArchivioMetadataPayloadMapper.IsPayloadFieldId(fieldId)
                 ? MetadataFieldCapability.ArchivioCustom
                 : base.GetFieldCapability(fieldId);
         }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Diagnostics;
 using Archivio.Controls;
 using Archivio.Models;
 using Archivio.ViewModels;
@@ -13,8 +14,12 @@ using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.Foundation;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Media.Core;
 using Windows.Media.Playback;
+using Windows.Storage;
+using Windows.Storage.Streams;
+using Windows.Graphics.Imaging;
 using CommunityToolkit.WinUI.UI.Controls;
 
 namespace Archivio.Views
@@ -27,6 +32,9 @@ namespace Archivio.Views
         private MediaPlayer? _playbackPlayer;
         private bool _isPlaybackView;
         private bool _isRefreshingCustomFields;
+        private bool _isRestoringLayoutSettings;
+        private bool _isThumbnailSheetGenerating;
+        private string? _ffmpegPath;
         private static MetadataFieldDefinition[] ListFieldDefinitions => MetadataFieldCatalog.ListFields.ToArray();
         private static MetadataFieldDefinition[] DetailFieldDefinitions => MetadataFieldCatalog.DetailFields.ToArray();
         private readonly Dictionary<string, FrameworkElement> _detailControls = new(StringComparer.Ordinal);
@@ -37,6 +45,8 @@ namespace Archivio.Views
             DataContext = new MainPageViewModel();
             BuildDynamicEditableFields();
             RegisterDetailControls();
+            BuildDynamicTechnicalFields();
+            DirectFileWriteModeCheckBox.IsChecked = SettingsManager.LoadSettings().UseDirectFileWriteMode;
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
             Unloaded += MainPage_Unloaded;
             VideoThumbnailGridView.ContextFlyout = VideoListDataGrid.ContextFlyout;
@@ -44,6 +54,8 @@ namespace Archivio.Views
             RestoreLayoutSettings();
             ApplyLocalization();
             InitializeLanguageMenu();
+            UpdateActionButtonStates();
+            _ = InitializeFfmpegAsync();
         }
 
         private void ApplyLocalization()
@@ -66,10 +78,15 @@ namespace Archivio.Views
                 ConfigureColumnsButton.Content = LanguageManager.GetString("Button_ChooseColumns");
                 ConfigureDetailsButton.Content = LanguageManager.GetString("Button_ChooseDetails");
                 ConfigureCustomFieldsButton.Content = LanguageManager.GetString("Button_CustomFields");
+                DirectFileWriteModeCheckBox.Content = LanguageManager.GetString("DirectFileWriteMode_Label");
+                ToolTipService.SetToolTip(DirectFileWriteModeCheckBox, LanguageManager.GetString("DirectFileWriteMode_Tooltip"));
                 DetailViewToggleButton.Content = LanguageManager.GetString("Button_DetailView");
                 ThumbnailViewToggleButton.Content = LanguageManager.GetString("Button_ThumbnailView");
                 VideoPlaybackToggleButton.Content = LanguageManager.GetString("Button_Play");
                 CoverArtViewToggleButton.Content = LanguageManager.GetString("Button_CoverArtView");
+                CaptureFrameButton.Content = LanguageManager.GetString("Button_CaptureFrame");
+                CreateThumbnailSheetButton.Content = LanguageManager.GetString("Button_CreateThumbnailSheet");
+                ToolTipService.SetToolTip(CreateThumbnailSheetButton, LanguageManager.GetString("Msg_FFmpegMissing"));
                 ToolTipService.SetToolTip(ThumbnailTileSizeComboBox, LanguageManager.GetString("ThumbnailTileSize"));
                 SearchTextBox.PlaceholderText = LanguageManager.GetString("Search_Placeholder");
                 ToolTipService.SetToolTip(SearchTextBox, LanguageManager.GetString("Search_Tooltip"));
@@ -86,6 +103,9 @@ namespace Archivio.Views
                 ReplaceImageButton.Content = LanguageManager.GetString("Button_ReplaceImage");
                 DeleteImageButton.Content = LanguageManager.GetString("Button_DeleteImage");
                 SaveImageButton.Content = LanguageManager.GetString("Button_SaveImage");
+                DetailFieldColumnsComboBox.Items[0] = new ComboBoxItem { Content = LanguageManager.GetString("DetailFieldColumns_One") };
+                DetailFieldColumnsComboBox.Items[1] = new ComboBoxItem { Content = LanguageManager.GetString("DetailFieldColumns_Two") };
+                ToolTipService.SetToolTip(DetailFieldColumnsComboBox, LanguageManager.GetString("DetailFieldColumns"));
 
                 // Subfolders toggle switch
                 ToolTipService.SetToolTip(SubfoldersToggle, LanguageManager.GetString("Subfolders_Search"));
@@ -93,6 +113,7 @@ namespace Archivio.Views
 
                 // Context Menu
                 RenameMenuItem.Text = LanguageManager.GetString("Menu_Rename");
+                RenameFromMetadataMenuItem.Text = LanguageManager.GetString("Menu_RenameFromMetadata");
                 DeleteMenuItem.Text = LanguageManager.GetString("Menu_Delete");
                 ReMuxMenuItem.Text = LanguageManager.GetString("Menu_ReMux");
                 ClearCacheMenuItem.Text = LanguageManager.GetString("Menu_ClearCache");
@@ -102,7 +123,7 @@ namespace Archivio.Views
 
                 // Details form field headers are derived from MetadataFieldCatalog.
                 ApplyDetailControlLocalization();
-                SaveMetadataButton.Content = LanguageManager.GetString("Button_Save");
+                SaveMetadataButton.Content = LanguageManager.GetString("Button_SaveMetadata");
 
                 // Technical Panel Fields Headers
                 SetControlHeader(DurationTextBox, "Col_Duration");
@@ -199,6 +220,29 @@ namespace Archivio.Views
             }
         }
 
+        private void BuildDynamicTechnicalFields()
+        {
+            foreach (var field in DetailFieldDefinitions.Where(field =>
+                         field.Category == MetadataFieldCategory.Technical
+                         && field.DetailsElementName is null
+                         && !string.IsNullOrWhiteSpace(field.DetailsBindingPath)))
+            {
+                var textBox = new TextBox
+                {
+                    Header = LanguageManager.GetString(field.LocalizationKey),
+                    IsReadOnly = true,
+                    Tag = field.Id
+                };
+                textBox.SetBinding(TextBox.TextProperty, new Binding
+                {
+                    Path = new PropertyPath($"SelectedVideo.{field.DetailsBindingPath}"),
+                    Mode = BindingMode.OneWay
+                });
+                _detailControls[field.Id] = textBox;
+                TechnicalMetadataFieldsPanel.Children.Add(textBox);
+            }
+        }
+
         private void BuildDynamicEditableFields()
         {
             var dynamicFields = DetailFieldDefinitions
@@ -207,7 +251,11 @@ namespace Archivio.Views
                     && (field.IsCustom || field.ValueType is MetadataFieldValueType.Text
                         or MetadataFieldValueType.MultipleText
                         or MetadataFieldValueType.Identifier
-                        or MetadataFieldValueType.Date))
+                        or MetadataFieldValueType.Date
+                        or MetadataFieldValueType.Integer
+                        or MetadataFieldValueType.Decimal
+                        or MetadataFieldValueType.Currency
+                        or MetadataFieldValueType.Url))
                 .ToArray();
 
             foreach (var field in dynamicFields)
@@ -217,7 +265,7 @@ namespace Archivio.Views
                     var customControl = CreateCustomDetailControl(field);
                     _detailControls[field.Id] = customControl;
                     EditableMetadataFieldsPanel.Children.Insert(
-                        Math.Max(0, EditableMetadataFieldsPanel.Children.Count - 2), customControl);
+                        Math.Max(0, EditableMetadataFieldsPanel.Children.Count - 1), customControl);
                     continue;
                 }
 
@@ -231,35 +279,48 @@ namespace Archivio.Views
                 var bindingPath = new PropertyPath($"SelectedVideo.{field.DetailsBindingPath}");
                 if (field.ValueType == MetadataFieldValueType.Date)
                 {
-                    var datePicker = new DatePicker
+                    var datePicker = new CalendarDatePicker
                     {
-                        MinYear = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero),
-                        Tag = field.Id
+                        DateFormat = "{year.full}/{month.integer(2)}/{day.integer(2)}",
+                        Width = 150,
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        HorizontalContentAlignment = HorizontalAlignment.Left,
+                        Tag = field.Id,
+                        Header = LanguageManager.GetString(field.LocalizationKey)
                     };
-                    datePicker.SetBinding(DatePicker.DateProperty, new Binding
-                    {
-                        Path = bindingPath,
-                        Mode = BindingMode.OneWay
-                    });
-                    datePicker.DateChanged += ReleaseDatePicker_DateChanged;
-                    control = datePicker;
-                }
-                else if (field.ValueType == MetadataFieldValueType.MultipleText)
-                {
-                    var multipleTextEditor = new MultipleTextEditor();
-                    multipleTextEditor.SetBinding(MultipleTextEditor.ValueProperty, new Binding
+                    datePicker.SetBinding(CalendarDatePicker.DateProperty, new Binding
                     {
                         Path = bindingPath,
                         Mode = BindingMode.TwoWay,
                         UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
                     });
+                    datePicker.DateChanged += (_, args) =>
+                    {
+                        if (field.Id == "dates.release") ReleaseDatePicker_DateChanged(_, args);
+                        else ViewModel.SelectedVideo?.MarkCustomMetadataFieldChanged(field.Id);
+                    };
+                    control = datePicker;
+                }
+                else if (field.ValueType == MetadataFieldValueType.MultipleText)
+                {
+                    var multipleTextEditor = new MultipleTextEditor { Header = LanguageManager.GetString(field.LocalizationKey) };
+                    multipleTextEditor.SetBinding(MultipleTextEditor.ValueProperty, new Binding
+                    {
+                        Path = bindingPath,
+                        Mode = BindingMode.TwoWay,
+                        Converter = StringListValueConverter.Instance,
+                        UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
+                    });
+                    multipleTextEditor.RegisterPropertyChangedCallback(MultipleTextEditor.ValueProperty,
+                        (_, _) => ViewModel.SelectedVideo?.MarkCustomMetadataFieldChanged(field.Id));
                     control = multipleTextEditor;
                 }
                 else
                 {
                     var textBox = new TextBox
                     {
-                        Tag = field.Id
+                        Tag = field.Id,
+                        Header = LanguageManager.GetString(field.LocalizationKey)
                     };
                     textBox.SetBinding(TextBox.TextProperty, new Binding
                     {
@@ -267,12 +328,13 @@ namespace Archivio.Views
                         Mode = BindingMode.TwoWay,
                         UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
                     });
+                    textBox.TextChanged += (_, _) => ViewModel.SelectedVideo?.MarkCustomMetadataFieldChanged(field.Id);
                     control = textBox;
                 }
 
                 _detailControls[field.Id] = control;
                 EditableMetadataFieldsPanel.Children.Insert(
-                    Math.Max(0, EditableMetadataFieldsPanel.Children.Count - 2),
+                    Math.Max(0, EditableMetadataFieldsPanel.Children.Count - 1),
                     control);
             }
         }
@@ -281,8 +343,16 @@ namespace Archivio.Views
         {
             if (field.ValueType == MetadataFieldValueType.Date)
             {
-                var picker = new DatePicker { Tag = field.Id, MinYear = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero), IsEnabled = field.IsEditable };
-                if (field.IsEditable) picker.DateChanged += (_, args) => SetCustomFieldValue(field, args.NewDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+                var picker = new CalendarDatePicker
+                {
+                    Tag = field.Id,
+                    DateFormat = "{year.full}/{month.integer(2)}/{day.integer(2)}",
+                    Width = 150,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    IsEnabled = field.IsEditable
+                };
+                if (field.IsEditable) picker.DateChanged += (_, args) => SetCustomFieldValue(field, args.NewDate?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty);
                 return picker;
             }
 
@@ -364,7 +434,7 @@ namespace Archivio.Views
                         case TextBox textBox when textBox.Text != text:
                             textBox.Text = text;
                             break;
-                        case DatePicker picker:
+                        case CalendarDatePicker picker:
                             picker.Date = value?.Date ?? DateTimeOffset.Now;
                             break;
                         case ComboBox combo when field.ValueType == MetadataFieldValueType.Boolean:
@@ -398,7 +468,7 @@ namespace Archivio.Views
                 case TextBox textBox:
                     textBox.Header = header;
                     break;
-                case DatePicker datePicker:
+                case CalendarDatePicker datePicker:
                     datePicker.Header = header;
                     break;
                 case ComboBox comboBox:
@@ -431,6 +501,7 @@ namespace Archivio.Views
 
         private void RestoreLayoutSettings()
         {
+            _isRestoringLayoutSettings = true;
             try
             {
                 var settings = SettingsManager.LoadSettings();
@@ -445,8 +516,12 @@ namespace Archivio.Views
                 }
                 if (settings.DetailsRowHeight > 0)
                 {
-                    DetailsRow.Height = new GridLength(settings.DetailsRowHeight, GridUnitType.Pixel);
+                    // 旧設定の固定ピクセル値は、ウィンドウを拡大しても詳細領域が伸びないため復元しない。
+                    // 詳細領域は既定の Star 配分でウィンドウサイズに追従させる。
+                    DetailsRow.Height = new GridLength(2, GridUnitType.Star);
                 }
+                settings.DetailFieldColumnCount = settings.DetailFieldColumnCount is 2 ? 2 : 1;
+                DetailFieldColumnsComboBox.SelectedIndex = settings.DetailFieldColumnCount - 1;
                 if (settings.CoverArtColumnWidth > 0)
                 {
                     CoverArtColumn.Width = new GridLength(settings.CoverArtColumnWidth, GridUnitType.Pixel);
@@ -524,6 +599,10 @@ namespace Archivio.Views
             {
                 AppLogger.Error("レイアウト設定の復元に失敗しました", ex);
             }
+            finally
+            {
+                _isRestoringLayoutSettings = false;
+            }
         }
 
         public void SaveLayoutSettings(AppSettings settings)
@@ -532,6 +611,7 @@ namespace Archivio.Views
             {
                 settings.FileListRowHeight = FileListRow.Height.Value;
                 settings.DetailsRowHeight = DetailsRow.Height.Value;
+            settings.DetailFieldColumnCount = DetailFieldColumnsComboBox.SelectedIndex == 1 ? 2 : 1;
                 if (CoverArtPane.Visibility == Visibility.Visible
                     && CoverArtColumn.Width.GridUnitType == GridUnitType.Pixel)
                 {
@@ -584,21 +664,29 @@ namespace Archivio.Views
             var filterStyle = Resources["FilteringColumnHeaderStyle"] as Style;
             foreach (var field in ListFieldDefinitions)
             {
-                var column = new CommunityToolkit.WinUI.UI.Controls.DataGridTextColumn
+                CommunityToolkit.WinUI.UI.Controls.DataGridColumn column = field.Id == "artwork.thumbnail"
+                    ? new CommunityToolkit.WinUI.UI.Controls.DataGridTemplateColumn
+                    {
+                        CellTemplate = Resources["ListThumbnailCellTemplate"] as DataTemplate
+                    }
+                    : new CommunityToolkit.WinUI.UI.Controls.DataGridTextColumn
                 {
                     Binding = new Binding
                     {
-                        Path = new PropertyPath(field.IsCustom ? "." : field.ListBindingPath),
+                        Path = new PropertyPath(field.IsCustom ? "." : field.ListBindingPath ?? field.DetailsBindingPath),
                         Mode = BindingMode.OneWay,
-                        Converter = field.IsCustom ? CustomMetadataListValueConverter.Instance : null,
+                        Converter = field.IsCustom
+                            ? CustomMetadataListValueConverter.Instance
+                            : field.IsMultiple ? StringListValueConverter.Instance : null,
                         ConverterParameter = field.CustomFieldId
-                    },
-                    Header = field.IsCustom ? field.CustomDisplayName : LanguageManager.GetString(field.LocalizationKey),
-                    IsReadOnly = true,
-                    Width = new CommunityToolkit.WinUI.UI.Controls.DataGridLength(field.DefaultListWidth),
-                    Tag = field.Id,
-                    Visibility = field.IsInListByDefault ? Visibility.Visible : Visibility.Collapsed
+                    }
                 };
+                column.Header = field.IsCustom ? field.CustomDisplayName : LanguageManager.GetString(field.LocalizationKey);
+                column.IsReadOnly = true;
+                column.Width = new CommunityToolkit.WinUI.UI.Controls.DataGridLength(
+                    field.Id == "artwork.thumbnail" ? 60 : field.DefaultListWidth);
+                column.Tag = field.Id;
+                column.Visibility = field.IsInListByDefault ? Visibility.Visible : Visibility.Collapsed;
                 if (field.IsFilterable)
                 {
                     column.HeaderStyle = filterStyle;
@@ -744,7 +832,7 @@ namespace Archivio.Views
         }
 
         private void ApplyDetailFieldOrder(
-            StackPanel panel,
+            Panel panel,
             IReadOnlyCollection<MetadataFieldDefinition> fields,
             IReadOnlyList<string> order,
             HashSet<string> visibleIds)
@@ -775,6 +863,59 @@ namespace Archivio.Views
             {
                 panel.Children.Add(child);
             }
+
+            if (ReferenceEquals(panel, EditableMetadataFieldsPanel))
+            {
+                ApplyEditableDetailFieldLayout();
+            }
+        }
+
+        private void ApplyEditableDetailFieldLayout()
+        {
+            var columnCount = DetailFieldColumnsComboBox.SelectedIndex == 1 ? 2 : 1;
+            EditableMetadataFieldsPanel.ColumnDefinitions.Clear();
+            for (var column = 0; column < columnCount; column++)
+            {
+                EditableMetadataFieldsPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            }
+
+            var visibleIndex = 0;
+            foreach (var control in EditableMetadataFieldsPanel.Children.OfType<FrameworkElement>())
+            {
+                if (control.Visibility != Visibility.Visible)
+                {
+                    Grid.SetRow(control, 0);
+                    Grid.SetColumn(control, 0);
+                    continue;
+                }
+
+                Grid.SetRow(control, visibleIndex / columnCount);
+                Grid.SetColumn(control, visibleIndex % columnCount);
+                control.HorizontalAlignment = control is CalendarDatePicker
+                    ? HorizontalAlignment.Left
+                    : HorizontalAlignment.Stretch;
+                visibleIndex++;
+            }
+
+            EditableMetadataFieldsPanel.RowDefinitions.Clear();
+            var rowCount = Math.Max(1, (int)Math.Ceiling(visibleIndex / (double)columnCount));
+            for (var row = 0; row < rowCount; row++)
+            {
+                EditableMetadataFieldsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            }
+        }
+
+        private void DetailFieldColumnsComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isRestoringLayoutSettings || !IsLoaded)
+            {
+                return;
+            }
+
+            ApplyEditableDetailFieldLayout();
+            var settings = SettingsManager.LoadSettings();
+            settings.DetailFieldColumnCount = DetailFieldColumnsComboBox.SelectedIndex == 1 ? 2 : 1;
+            SettingsManager.SaveSettings(settings);
         }
 
         private List<string> GetDisplayedDetailFieldOrder()
@@ -804,7 +945,7 @@ namespace Archivio.Views
             return visibleIds;
         }
 
-        private static IEnumerable<string> GetDetailPanelOrder(StackPanel panel)
+        private static IEnumerable<string> GetDetailPanelOrder(Panel panel)
         {
             return panel.Children
                 .OfType<FrameworkElement>()
@@ -869,34 +1010,94 @@ namespace Archivio.Views
         {
             var group = new StackPanel { Spacing = 4 };
             var rows = new StackPanel { Spacing = 2 };
+            Grid? draggingRow = null;
+            var accumulatedDrag = 0d;
             group.Tag = rows;
             var orderIndex = detailOrder
                 .Select((fieldId, index) => (fieldId, index))
                 .ToDictionary(item => item.fieldId, item => item.index, StringComparer.Ordinal);
             foreach (var field in fields.OrderBy(field => orderIndex.TryGetValue(field.Id, out var index) ? index : int.MaxValue))
             {
-                var row = new Grid { Tag = field.Id };
+                var row = new Grid
+                {
+                    Tag = field.Id,
+                    // 背景がないPanelは空き領域がヒットテスト対象にならないため、
+                    // ドラッグハンドルを含む行全体を確実にポインター対象にする。
+                    Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0))
+                };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.Children.Add(new CheckBox
+                var dragHandle = new Border
+                {
+                    Child = new TextBlock { Text = "☷", FontSize = 20 },
+                    Width = 32,
+                    Height = 32,
+                    Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Opacity = 0.7,
+                    IsHitTestVisible = true,
+                    ManipulationMode = ManipulationModes.TranslateY
+                };
+                dragHandle.ManipulationStarted += (_, args) =>
+                {
+                    draggingRow = row;
+                    accumulatedDrag = 0;
+                    args.Handled = true;
+                };
+                dragHandle.ManipulationDelta += (_, args) =>
+                {
+                    if (draggingRow != row) return;
+                    accumulatedDrag += args.Delta.Translation.Y;
+                    args.Handled = true;
+                };
+                dragHandle.ManipulationCompleted += (_, args) =>
+                {
+                    if (draggingRow == row)
+                    {
+                        var sourceIndex = rows.Children.IndexOf(row);
+                        var targetIndex = sourceIndex;
+                        var remaining = accumulatedDrag;
+                        if (sourceIndex >= 0)
+                        {
+                            while (remaining > 0 && targetIndex < rows.Children.Count - 1)
+                            {
+                                var next = rows.Children[targetIndex + 1] as Grid;
+                                var height = Math.Max(next?.ActualHeight ?? row.ActualHeight, 1);
+                                if (remaining < Math.Max((row.ActualHeight + height) / 2, 1)) break;
+                                remaining -= height;
+                                targetIndex++;
+                            }
+                            while (remaining < 0 && targetIndex > 0)
+                            {
+                                var previous = rows.Children[targetIndex - 1] as Grid;
+                                var height = Math.Max(previous?.ActualHeight ?? row.ActualHeight, 1);
+                                if (-remaining < Math.Max((row.ActualHeight + height) / 2, 1)) break;
+                                remaining += height;
+                                targetIndex--;
+                            }
+                            if (targetIndex != sourceIndex)
+                            {
+                                rows.Children.RemoveAt(sourceIndex);
+                                rows.Children.Insert(targetIndex, row);
+                            }
+                        }
+                        draggingRow = null;
+                        accumulatedDrag = 0;
+                    }
+                    args.Handled = true;
+                };
+                Grid.SetColumn(dragHandle, 0);
+                row.Children.Add(dragHandle);
+                var checkBox = new CheckBox
                 {
                     Content = GetDetailFieldDisplayName(field),
                     IsChecked = visibleIds.Contains(field.Id),
                     VerticalAlignment = VerticalAlignment.Center
-                });
+                };
+                Grid.SetColumn(checkBox, 1);
+                row.Children.Add(checkBox);
 
-                var moveUpButton = new Button { Content = "↑", Width = 36, Height = 32, Padding = new Thickness(0) };
-                ToolTipService.SetToolTip(moveUpButton, LanguageManager.GetString("Button_MoveUp"));
-                moveUpButton.Click += (_, _) => MoveDetailOption(rows, row, -1);
-                Grid.SetColumn(moveUpButton, 1);
-                row.Children.Add(moveUpButton);
-
-                var moveDownButton = new Button { Content = "↓", Width = 36, Height = 32, Padding = new Thickness(0) };
-                ToolTipService.SetToolTip(moveDownButton, LanguageManager.GetString("Button_MoveDown"));
-                moveDownButton.Click += (_, _) => MoveDetailOption(rows, row, 1);
-                Grid.SetColumn(moveDownButton, 2);
-                row.Children.Add(moveDownButton);
                 rows.Children.Add(row);
             }
 
@@ -913,19 +1114,6 @@ namespace Archivio.Views
                         ? LanguageManager.GetString("Dialog_DetailReadOnlySuffix")
                         : string.Empty;
             return string.IsNullOrWhiteSpace(suffix) ? label : $"{label} {suffix}";
-        }
-
-        private static void MoveDetailOption(StackPanel rows, Grid row, int offset)
-        {
-            var currentIndex = rows.Children.IndexOf(row);
-            var targetIndex = currentIndex + offset;
-            if (currentIndex < 0 || targetIndex < 0 || targetIndex >= rows.Children.Count)
-            {
-                return;
-            }
-
-            rows.Children.RemoveAt(currentIndex);
-            rows.Children.Insert(targetIndex, row);
         }
 
         private static List<string> GetDetailOptionIds(StackPanel group)
@@ -1237,14 +1425,73 @@ namespace Archivio.Views
             await ViewModel.Details.SaveMetadataAsync();
         }
 
-        private void ReleaseDatePicker_DateChanged(object? sender, DatePickerValueChangedEventArgs args)
+        private async void DirectFileWriteModeCheckBox_Click(object sender, RoutedEventArgs e)
         {
-            if (ViewModel.SelectedVideo is null)
+            var settings = SettingsManager.LoadSettings();
+            var requested = DirectFileWriteModeCheckBox.IsChecked == true;
+            if (requested && !settings.UseDirectFileWriteMode)
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = LanguageManager.GetString("DirectFileWriteMode_WarningTitle"),
+                    Content = LanguageManager.GetString("DirectFileWriteMode_WarningMessage"),
+                    PrimaryButtonText = LanguageManager.GetString("DirectFileWriteMode_Enable"),
+                    CloseButtonText = LanguageManager.GetString("Button_Cancel"),
+                    XamlRoot = Content.XamlRoot
+                };
+
+                if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                {
+                    DirectFileWriteModeCheckBox.IsChecked = false;
+                    return;
+                }
+            }
+
+            settings.UseDirectFileWriteMode = requested;
+            SettingsManager.SaveSettings(settings);
+        }
+
+        private void ReleaseDatePicker_DateChanged(object? sender, CalendarDatePickerDateChangedEventArgs args)
+        {
+            if (ViewModel.SelectedVideo is null || args.NewDate is not { } newDate)
             {
                 return;
             }
 
-            ViewModel.SelectedVideo.ReleaseDate = args.NewDate;
+            ViewModel.SelectedVideo.ReleaseDate = newDate;
+            if (ViewModel.SelectedVideo.HasChanges(nameof(VideoFileItem.ReleaseDate)))
+            {
+                ViewModel.SelectedVideo.MarkCustomMetadataFieldChanged("dates.release");
+            }
+        }
+
+        private sealed class StringListValueConverter : IValueConverter
+        {
+            public static StringListValueConverter Instance { get; } = new();
+
+            public object Convert(object value, Type targetType, object parameter, string language)
+            {
+                return value switch
+                {
+                    IEnumerable<string> values => string.Join("; ", values),
+                    _ => value?.ToString() ?? string.Empty
+                };
+            }
+
+            public object ConvertBack(object value, Type targetType, object parameter, string language)
+            {
+                var values = (value?.ToString() ?? string.Empty)
+                    .Split(new[] { ';', '\r', '\n', ',', '，', '；' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(item => item.Trim())
+                    .Where(item => item.Length > 0)
+                    .ToList();
+
+                // Category/Participantsなどは区切り文字付きのstring、
+                // 追加項目のAlternateTitlesなどはList<string>で保持する。
+                return targetType == typeof(string)
+                    ? string.Join("; ", values)
+                    : values;
+            }
         }
 
         protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -1278,6 +1525,321 @@ namespace Archivio.Views
             await ViewModel.Details.AddCoverArtImageAsync();
         }
 
+        private void CoverArt_DragOver(object sender, DragEventArgs e)
+        {
+            e.AcceptedOperation = e.DataView.Contains(StandardDataFormats.StorageItems)
+                ? DataPackageOperation.Copy
+                : DataPackageOperation.None;
+            e.Handled = true;
+        }
+
+        private async void CoverArt_Drop(object sender, DragEventArgs e)
+        {
+            if (ViewModel.SelectedVideo is null
+                || !e.DataView.Contains(StandardDataFormats.StorageItems))
+            {
+                return;
+            }
+
+            var items = await e.DataView.GetStorageItemsAsync();
+            var imageFiles = items
+                .OfType<StorageFile>()
+                .Where(file => file.FileType.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+                    || file.FileType.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+                    || file.FileType.Equals(".png", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (imageFiles.Count == 0)
+            {
+                return;
+            }
+
+            var replace = false;
+            if (ViewModel.SelectedVideo.HasCoverArt
+                || ViewModel.SelectedVideo.CoverArtImages.Count > 0)
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = LanguageManager.GetString("CoverArtDrop_Title"),
+                    Content = LanguageManager.GetString("CoverArtDrop_Message"),
+                    PrimaryButtonText = LanguageManager.GetString("CoverArtDrop_Add"),
+                    SecondaryButtonText = LanguageManager.GetString("CoverArtDrop_Replace"),
+                    CloseButtonText = LanguageManager.GetString("Button_Cancel"),
+                    XamlRoot = Content.XamlRoot
+                };
+                var result = await dialog.ShowAsync();
+                if (result == ContentDialogResult.None)
+                {
+                    return;
+                }
+
+                replace = result == ContentDialogResult.Secondary;
+            }
+
+            for (var index = 0; index < imageFiles.Count; index++)
+            {
+                await ViewModel.Details.ImportCoverArtImageAsync(
+                    imageFiles[index],
+                    replace && index == 0);
+            }
+
+            e.Handled = true;
+        }
+
+        private async void CaptureFrameButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isPlaybackView || _videoPlayerElement?.Source is null || _playbackPlayer is null
+                || ViewModel.SelectedVideo is null)
+            {
+                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_CaptureFramePlaybackRequired"));
+                return;
+            }
+
+            var ffmpegPath = await GetFfmpegPathAsync();
+            if (ffmpegPath is null)
+            {
+                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_FFmpegMissing"));
+                return;
+            }
+
+            string? outputPath = null;
+            try
+            {
+                var file = await ViewModel.SelectedVideo.GetFileAsync();
+                outputPath = Path.Combine(Path.GetTempPath(), $"archivio-frame-{Guid.NewGuid():N}.png");
+                var position = _playbackPlayer.PlaybackSession?.Position ?? TimeSpan.Zero;
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    UseShellExecute = false,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                startInfo.ArgumentList.Add("-hide_banner");
+                startInfo.ArgumentList.Add("-loglevel");
+                startInfo.ArgumentList.Add("error");
+                startInfo.ArgumentList.Add("-ss");
+                startInfo.ArgumentList.Add(Math.Max(0, position.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                startInfo.ArgumentList.Add("-i");
+                startInfo.ArgumentList.Add(file.Path);
+                startInfo.ArgumentList.Add("-frames:v");
+                startInfo.ArgumentList.Add("1");
+                startInfo.ArgumentList.Add("-f");
+                startInfo.ArgumentList.Add("image2");
+                startInfo.ArgumentList.Add("-c:v");
+                startInfo.ArgumentList.Add("png");
+                startInfo.ArgumentList.Add("-y");
+                startInfo.ArgumentList.Add(outputPath);
+
+                using var process = Process.Start(startInfo)
+                    ?? throw new InvalidOperationException("FFmpegを起動できませんでした。");
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                if (process.ExitCode != 0 || !File.Exists(outputPath))
+                {
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(error)
+                        ? LanguageManager.GetString("Msg_CaptureFrameUnavailable")
+                        : error.Trim());
+                }
+
+                var data = await File.ReadAllBytesAsync(outputPath);
+                await ViewModel.Details.AddGeneratedCoverArtImageAsync(
+                    data,
+                    "image/png",
+                    $"Archivio capture {position:hh\\:mm\\:ss}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("動画フレームのキャプチャに失敗しました", ex, ViewModel.SelectedVideo?.FullPath);
+                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_CaptureFrameFailed", ex.Message));
+            }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(outputPath))
+                {
+                    try { if (File.Exists(outputPath)) File.Delete(outputPath); }
+                    catch (Exception ex) { AppLogger.Error("一時キャプチャ画像の削除に失敗しました", ex, outputPath); }
+                }
+            }
+        }
+
+        private async void CreateThumbnailSheetButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isThumbnailSheetGenerating || ViewModel.SelectedVideo is null)
+            {
+                return;
+            }
+
+            _isThumbnailSheetGenerating = true;
+            UpdateActionButtonStates();
+            string? outputPath = null;
+            try
+            {
+                var ffmpegPath = await GetFfmpegPathAsync();
+                if (ffmpegPath is null)
+                {
+                    ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_FFmpegMissing"));
+                    return;
+                }
+
+                var file = await ViewModel.SelectedVideo.GetFileAsync();
+                outputPath = Path.Combine(Path.GetTempPath(), $"archivio-sheet-{Guid.NewGuid():N}.png");
+                var duration = ViewModel.SelectedVideo.DurationValue?.TotalSeconds
+                    ?? ViewModel.SelectedVideo.TechnicalInfo.Duration?.TotalSeconds
+                    ?? 0;
+                if (duration <= 0)
+                {
+                    // 動画を再生していなくても、選択直後の非同期読み込みが完了していない場合に
+                    // ここで技術情報を直接取得してサムネイル生成を継続する。
+                    var probeResult = await new MediaProbeService().ProbeAsync(file);
+                    duration = probeResult.Duration?.TotalSeconds
+                        ?? probeResult.Technical.Duration?.TotalSeconds
+                        ?? 0;
+                }
+                if (duration <= 0)
+                {
+                    throw new InvalidOperationException("動画の再生時間を取得できないため、サムネイルを作成できません。");
+                }
+
+                // 動画全体を fps フィルターでデコードすると長時間動画ほど遅くなるため、
+                // 各区間の中央へ直接シークして25フレームだけ取得する。
+                var filterParts = new List<string>(25);
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    UseShellExecute = false,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                startInfo.ArgumentList.Add("-hide_banner");
+                startInfo.ArgumentList.Add("-loglevel");
+                startInfo.ArgumentList.Add("error");
+                for (var index = 0; index < 25; index++)
+                {
+                    var timestamp = duration * (index + 0.5) / 25.0;
+                    startInfo.ArgumentList.Add("-ss");
+                    startInfo.ArgumentList.Add(timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    startInfo.ArgumentList.Add("-i");
+                    startInfo.ArgumentList.Add(file.Path);
+                    filterParts.Add($"[{index}:v:0]trim=end_frame=1,setpts=PTS-STARTPTS,scale=320:-2[s{index}]");
+                }
+
+                var tileInputs = string.Concat(Enumerable.Range(0, 25).Select(index => $"[s{index}]"));
+                var filter = string.Join(";", filterParts)
+                    + $";{tileInputs}concat=n=25:v=1:a=0[frames];[frames]tile=5x5:padding=4:margin=4:color=black[v]";
+                startInfo.ArgumentList.Add("-filter_complex");
+                startInfo.ArgumentList.Add(filter);
+                startInfo.ArgumentList.Add("-map");
+                startInfo.ArgumentList.Add("[v]");
+                startInfo.ArgumentList.Add("-frames:v");
+                startInfo.ArgumentList.Add("1");
+                startInfo.ArgumentList.Add("-an");
+                startInfo.ArgumentList.Add("-y");
+                startInfo.ArgumentList.Add(outputPath);
+
+                using var process = Process.Start(startInfo)
+                    ?? throw new InvalidOperationException("FFmpegを起動できませんでした。");
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                if (process.ExitCode != 0 || !File.Exists(outputPath))
+                {
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(error)
+                        ? "FFmpegでサムネイルリストを作成できませんでした。"
+                        : error.Trim());
+                }
+
+                var data = await File.ReadAllBytesAsync(outputPath);
+                await ViewModel.Details.AddGeneratedCoverArtImageAsync(
+                    data,
+                    "image/png",
+                    "Archivio thumbnail sheet");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("サムネイルリストの生成に失敗しました", ex, ViewModel.SelectedVideo?.FullPath);
+                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_ThumbnailSheetFailed", ex.Message));
+            }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(outputPath))
+                {
+                    try { if (File.Exists(outputPath)) File.Delete(outputPath); }
+                    catch (Exception ex) { AppLogger.Error("一時サムネイルの削除に失敗しました", ex, outputPath); }
+                }
+
+                _isThumbnailSheetGenerating = false;
+                UpdateActionButtonStates();
+            }
+        }
+
+        private async Task InitializeFfmpegAsync()
+        {
+            _ffmpegPath = await FindFfmpegAsync();
+            UpdateActionButtonStates();
+        }
+
+        private async Task<string?> GetFfmpegPathAsync()
+        {
+            _ffmpegPath ??= await FindFfmpegAsync();
+            UpdateActionButtonStates();
+            return _ffmpegPath;
+        }
+
+        private static async Task<string?> FindFfmpegAsync()
+        {
+            var configuredFfprobe = SettingsManager.LoadSettings().FfprobePath;
+            if (!string.IsNullOrWhiteSpace(configuredFfprobe))
+            {
+                var configuredPath = configuredFfprobe.Trim().Trim('"');
+                if (Path.GetFileName(configuredPath).Equals("ffmpeg.exe", StringComparison.OrdinalIgnoreCase)
+                    && File.Exists(configuredPath))
+                {
+                    return configuredPath;
+                }
+
+                var directory = Path.GetDirectoryName(configuredPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    var sibling = Path.Combine(directory, "ffmpeg.exe");
+                    if (File.Exists(sibling)) return sibling;
+                }
+            }
+
+            // `where.exe` may not see PATH changes made after the app was started.
+            // Check the current process PATH as well as the normal Windows lookup.
+            var pathEntries = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+                .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var directory in pathEntries)
+            {
+                try
+                {
+                    var candidate = Path.Combine(directory.Trim('"'), "ffmpeg.exe");
+                    if (File.Exists(candidate)) return candidate;
+                }
+                catch (ArgumentException)
+                {
+                    // Ignore malformed PATH entries.
+                }
+            }
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "where.exe",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("ffmpeg.exe");
+            using var process = Process.Start(startInfo);
+            if (process is null) return null;
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            if (process.ExitCode != 0) return null;
+
+            return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(path => path.Trim().Trim('"'))
+                .FirstOrDefault(File.Exists);
+        }
+
         private async void ReplaceImageButton_Click(object sender, RoutedEventArgs e)
         {
             await ViewModel.Details.ReplaceCoverArtImageAsync();
@@ -1286,6 +1848,70 @@ namespace Archivio.Views
         private void DeleteImageButton_Click(object sender, RoutedEventArgs e)
         {
             ViewModel.Details.DeleteCoverArtImage();
+        }
+
+        private void MainPage_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+        {
+            if (!_isPlaybackView
+                || _videoPlayerElement?.Source is null
+                || _playbackPlayer is null)
+            {
+                return;
+            }
+
+            var session = _playbackPlayer.PlaybackSession;
+            if (session is null)
+            {
+                return;
+            }
+
+            switch (e.Key)
+            {
+                case Windows.System.VirtualKey.Left:
+                    session.Position = ClampPlaybackPosition(
+                        session.Position - TimeSpan.FromSeconds(5),
+                        session.NaturalDuration);
+                    e.Handled = true;
+                    break;
+                case Windows.System.VirtualKey.Right:
+                    session.Position = ClampPlaybackPosition(
+                        session.Position + TimeSpan.FromSeconds(5),
+                        session.NaturalDuration);
+                    e.Handled = true;
+                    break;
+                case Windows.System.VirtualKey.Up:
+                    _playbackPlayer.Volume = Math.Min(1.0, _playbackPlayer.Volume + 0.05);
+                    e.Handled = true;
+                    break;
+                case Windows.System.VirtualKey.Down:
+                    _playbackPlayer.Volume = Math.Max(0.0, _playbackPlayer.Volume - 0.05);
+                    e.Handled = true;
+                    break;
+                case Windows.System.VirtualKey.Space:
+                    if (session.PlaybackState == MediaPlaybackState.Playing)
+                    {
+                        _playbackPlayer.Pause();
+                    }
+                    else
+                    {
+                        _playbackPlayer.Play();
+                    }
+
+                    e.Handled = true;
+                    break;
+            }
+        }
+
+        private static TimeSpan ClampPlaybackPosition(TimeSpan position, TimeSpan duration)
+        {
+            if (position < TimeSpan.Zero)
+            {
+                return TimeSpan.Zero;
+            }
+
+            return duration > TimeSpan.Zero && position > duration
+                ? duration
+                : position;
         }
 
         private async void DataGrid_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
@@ -1302,12 +1928,41 @@ namespace Archivio.Views
             if (e.PropertyName == nameof(MainPageViewModel.SelectedVideo))
             {
                 RefreshCustomDetailControls();
+                UpdateActionButtonStates();
                 // 別ファイルを選択したら、現在の動画と標準コントロールを終了する。
                 _isPlaybackView = false;
                 CoverArtViewToggleButton.IsChecked = true;
                 VideoPlaybackToggleButton.IsChecked = false;
                 await UpdatePlaybackSourceAsync();
             }
+        }
+
+        private void UpdateCaptureFrameButtonState()
+        {
+            CaptureFrameButton.IsEnabled = _isPlaybackView
+                && _videoPlayerElement?.Source is not null
+                && _playbackPlayer is not null
+                && ViewModel.IsVideoSelected;
+        }
+
+        private void UpdateActionButtonStates()
+        {
+            UpdateCaptureFrameButtonState();
+            CreateThumbnailSheetButton.IsEnabled = ViewModel.IsVideoSelected
+                && _ffmpegPath is not null
+                && !_isThumbnailSheetGenerating;
+            ThumbnailSheetProgressRing.IsActive = _isThumbnailSheetGenerating;
+            ThumbnailSheetProgressRing.Visibility = _isThumbnailSheetGenerating
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            CreateThumbnailSheetButton.Content = _isThumbnailSheetGenerating
+                ? LanguageManager.GetString("Msg_ThumbnailSheetProcessing")
+                : LanguageManager.GetString("Button_CreateThumbnailSheet");
+            ToolTipService.SetToolTip(
+                CreateThumbnailSheetButton,
+                _ffmpegPath is null
+                    ? LanguageManager.GetString("Msg_FFmpegMissing")
+                    : LanguageManager.GetString("Tooltip_CreateThumbnailSheet"));
         }
 
         private async void CoverArtViewToggleButton_Click(object sender, RoutedEventArgs e)
@@ -1340,6 +1995,7 @@ namespace Archivio.Views
             if (!_isPlaybackView)
             {
                 StopPlayback(removePlayer: true);
+                UpdateActionButtonStates();
                 return;
             }
 
@@ -1356,6 +2012,7 @@ namespace Archivio.Views
 
             if (_playbackPlayer is null || _videoPlayerElement is null)
             {
+                UpdateActionButtonStates();
                 return;
             }
 
@@ -1364,6 +2021,7 @@ namespace Archivio.Views
 
             if (ViewModel.SelectedVideo is null)
             {
+                UpdateActionButtonStates();
                 return;
             }
 
@@ -1379,6 +2037,7 @@ namespace Archivio.Views
                 }
 
                 _videoPlayerElement.Source = MediaSource.CreateFromStorageFile(file);
+                UpdateActionButtonStates();
             }
             catch (OperationCanceledException)
             {
@@ -1517,7 +2176,14 @@ namespace Archivio.Views
             {
                 // If there's no active filter, default to checked. Otherwise, check if it's in the active filter list
                 bool isChecked = activeFilterValues == null || activeFilterValues.Contains(val);
-                list.Add(new FilterValueItem { Value = val, IsChecked = isChecked });
+                list.Add(new FilterValueItem
+                {
+                    Value = val,
+                    DisplayValue = string.IsNullOrEmpty(val)
+                        ? LanguageManager.GetString("Filter_Blank")
+                        : val,
+                    IsChecked = isChecked
+                });
             }
 
             // Bind to ItemsControl
@@ -1743,8 +2409,9 @@ namespace Archivio.Views
         private void UpdateContextMenuState()
         {
             // Dynamically enable/disable menu items
-            bool isItemSelected = (VideoListDataGrid.SelectedItem != null);
+            bool isItemSelected = ViewModel.IsVideoSelected;
             RenameMenuItem.IsEnabled = isItemSelected;
+            RenameFromMetadataMenuItem.IsEnabled = isItemSelected;
             DeleteMenuItem.IsEnabled = isItemSelected;
             ReMuxMenuItem.IsEnabled = isItemSelected;
 
@@ -1784,6 +2451,392 @@ namespace Archivio.Views
                     await ViewModel.RenameVideoAsync(selectedVideo, newName);
                 }
             }
+        }
+
+        private async void RenameFromMetadataMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var selectedVideo = ViewModel.SelectedVideo;
+            if (selectedVideo is null)
+            {
+                return;
+            }
+
+            var settings = SettingsManager.LoadSettings();
+            var templateBox = new TextBox
+            {
+                Text = settings.FileNameTemplate,
+                PlaceholderText = LanguageManager.GetString("Dialog_RenameFromMetadata_Hint"),
+                Width = 520,
+                TextWrapping = TextWrapping.Wrap
+            };
+            var previewText = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            void UpdatePreview()
+            {
+                var result = TryBuildMetadataFileName(selectedVideo, templateBox.Text, out var name, out _);
+                previewText.Text = result
+                    ? LanguageManager.GetString("Dialog_RenameFromMetadata_Preview", name)
+                    : LanguageManager.GetString("Msg_RenameFromMetadata_Empty");
+            }
+            templateBox.TextChanged += (_, _) => UpdatePreview();
+            UpdatePreview();
+
+            var content = new StackPanel { Spacing = 4 };
+            content.Children.Add(new TextBlock { Text = LanguageManager.GetString("Dialog_RenameFromMetadata_Template") });
+            content.Children.Add(templateBox);
+            content.Children.Add(new TextBlock
+            {
+                Text = LanguageManager.GetString("Dialog_RenameFromMetadata_Hint"),
+                Opacity = 0.75
+            });
+            content.Children.Add(previewText);
+
+            var dialog = new ContentDialog
+            {
+                Title = LanguageManager.GetString("Dialog_RenameFromMetadata_Title"),
+                Content = content,
+                PrimaryButtonText = LanguageManager.GetString("Button_Save"),
+                CloseButtonText = LanguageManager.GetString("Button_Cancel"),
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = XamlRoot
+            };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            var template = templateBox.Text.Trim();
+            if (!TryBuildMetadataFileName(selectedVideo, template, out var newName, out var invalidIds))
+            {
+                var message = invalidIds.Count > 0
+                    ? LanguageManager.GetString("Msg_RenameFromMetadata_InvalidTemplate", string.Join(", ", invalidIds))
+                    : LanguageManager.GetString("Msg_RenameFromMetadata_Empty");
+                ViewModel.SetPlaybackError(message);
+                return;
+            }
+
+            settings.FileNameTemplate = template;
+            SettingsManager.SaveSettings(settings);
+            if (!string.Equals(newName, selectedVideo.FileName, StringComparison.OrdinalIgnoreCase))
+            {
+                await ViewModel.RenameVideoAsync(selectedVideo, newName);
+            }
+        }
+
+        private static bool TryBuildMetadataFileName(
+            VideoFileItem video,
+            string template,
+            out string fileName,
+            out List<string> invalidIds)
+        {
+            fileName = string.Empty;
+            invalidIds = new List<string>();
+            if (string.IsNullOrWhiteSpace(template))
+            {
+                return false;
+            }
+
+            var result = new System.Text.StringBuilder();
+            for (var index = 0; index < template.Length;)
+            {
+                if (template[index] == '\\')
+                {
+                    var end = index + 1;
+                    while (end < template.Length && template[end] is not ('[' or ']' or '{' or '}' or '\\')) end++;
+                    AppendTokenValue(video, invalidIds, result, template[(index + 1)..end]);
+                    index = end;
+                    continue;
+                }
+
+                if (template[index] == '{')
+                {
+                    var close = template.IndexOf('}', index + 1);
+                    if (close < 0)
+                    {
+                        result.Append(template[index..]);
+                        break;
+                    }
+
+                    var token = template[(index + 1)..close].Trim();
+                    var preserveBraces = token.StartsWith('\\');
+                    if (preserveBraces) token = token[1..];
+                    if (TryResolveMetadataToken(video, token, out _))
+                    {
+                        if (preserveBraces) result.Append('{');
+                        AppendTokenValue(video, invalidIds, result, token);
+                        if (preserveBraces) result.Append('}');
+                    }
+                    else
+                    {
+                        result.Append(template[index..(close + 1)]);
+                        if (!string.IsNullOrWhiteSpace(token)) invalidIds.Add(token);
+                    }
+
+                    index = close + 1;
+                    continue;
+                }
+
+                // 角括弧などの記号は通常文字として扱う。例えば
+                // [\出演者0]\タイトル[\品番] は角括弧を残して展開する。
+                result.Append(template[index]);
+                index++;
+            }
+
+            var invalidFileNameChars = System.IO.Path.GetInvalidFileNameChars();
+            fileName = new string(result.ToString()
+                .Select(character => invalidFileNameChars.Contains(character) ? '_' : character)
+                .ToArray()).Trim().TrimEnd('.', ' ');
+            if (string.IsNullOrWhiteSpace(fileName) || fileName is "." or ".." || invalidIds.Count > 0)
+            {
+                return false;
+            }
+
+            fileName += System.IO.Path.GetExtension(video.FileName);
+            return true;
+        }
+
+        private static void AppendTokenValue(
+            VideoFileItem video,
+            ICollection<string> invalidIds,
+            System.Text.StringBuilder result,
+            string id)
+        {
+            if (TryResolveMetadataToken(video, id, out var value))
+            {
+                result.Append(value);
+            }
+            else
+            {
+                invalidIds.Add(id);
+            }
+        }
+
+        /// <summary>
+        /// ファイル名テンプレートのIDを、表示名ではなくメタデータカタログの安定IDから解決する。
+        /// 例: work.subtitle、work.alternate-titles.0、credits.cast.0、custom.my-field。
+        /// </summary>
+        private static bool TryResolveMetadataToken(VideoFileItem video, string token, out string value)
+        {
+            value = string.Empty;
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return false;
+            }
+
+            var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["出演者0"] = "credits.cast.0",
+                ["タイトル"] = "work.title",
+                ["品番"] = "identifiers.catalog-number"
+            };
+            token = aliases.TryGetValue(token.Trim(), out var alias) ? alias : token.Trim();
+
+            // 出演者は人物名・役名・主演をテンプレートから個別に指定できる。
+            if (TryParseCastToken(token, out var castIndex, out var castPart))
+            {
+                var cast = video.StructuredMetadata.PeopleAndStaff.Cast
+                    .OrderBy(credit => credit.Order)
+                    .ToList();
+                if (castIndex < 0 || castIndex >= cast.Count)
+                {
+                    value = string.Empty;
+                    return MetadataFieldCatalog.FindById("credits.cast") is not null;
+                }
+
+                var credit = cast[castIndex];
+                value = castPart switch
+                {
+                    "character" or "role" => credit.CharacterName,
+                    "lead" => credit.IsLead ? "true" : "false",
+                    _ => credit.PersonName
+                };
+                return true;
+            }
+
+            var definition = MetadataFieldCatalog.FindById(token);
+            var indexed = false;
+            var index = -1;
+            var baseToken = token;
+            if (definition is null)
+            {
+                var separator = token.LastIndexOf('.');
+                if (separator > 0 && int.TryParse(token[(separator + 1)..], out index))
+                {
+                    baseToken = token[..separator];
+                    definition = MetadataFieldCatalog.FindById(baseToken);
+                    indexed = definition is not null;
+                }
+            }
+
+            if (definition is null)
+            {
+                return false;
+            }
+
+            if (definition.IsCustom)
+            {
+                if (video.StructuredMetadata.CustomFields.TryGetValue(
+                        definition.CustomFieldId ?? definition.Id, out var customValue))
+                {
+                    value = FormatMetadataValue(customValue);
+                }
+                return true;
+            }
+
+            // 画像バイナリや表示専用項目は、ファイル名に埋め込める文字値を持たない。
+            var path = definition.DetailsBindingPath ?? definition.ListBindingPath;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return true;
+            }
+
+            if (!TryReadPropertyPath(video, path, out var rawValue))
+            {
+                return true;
+            }
+
+            if (indexed)
+            {
+                rawValue = GetIndexedValue(rawValue, index);
+            }
+
+            value = FormatMetadataValue(rawValue);
+            return true;
+        }
+
+        private static bool TryParseCastToken(string token, out int index, out string part)
+        {
+            index = -1;
+            part = string.Empty;
+            const string prefix = "credits.cast.";
+            if (!token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var remainder = token[prefix.Length..];
+            var parts = remainder.Split('.', 2);
+            if (!int.TryParse(parts[0], out index))
+            {
+                return false;
+            }
+
+            part = parts.Length == 2 ? parts[1].ToLowerInvariant() : "person";
+            return true;
+        }
+
+        private static bool TryReadPropertyPath(object source, string path, out object? value)
+        {
+            value = source;
+            foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (value is null)
+                {
+                    return false;
+                }
+
+                var property = value.GetType().GetProperty(
+                    segment,
+                    System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.IgnoreCase);
+                if (property is null)
+                {
+                    value = null;
+                    return false;
+                }
+
+                value = property.GetValue(value);
+            }
+
+            return true;
+        }
+
+        private static object? GetIndexedValue(object? value, int index)
+        {
+            if (index < 0)
+            {
+                return null;
+            }
+
+            if (value is System.Collections.IList list)
+            {
+                return index >= 0 && index < list.Count ? list[index] : null;
+            }
+
+            if (value is IEnumerable<string> strings)
+            {
+                return strings.Skip(index).FirstOrDefault();
+            }
+
+            if (value is string text)
+            {
+                return text.Split(new[] { ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(item => item.Trim())
+                    .Skip(index)
+                    .FirstOrDefault();
+            }
+
+            return null;
+        }
+
+        private static string FormatMetadataValue(object? value)
+        {
+            if (value is null)
+            {
+                return string.Empty;
+            }
+
+            if (value is MetadataValue metadataValue)
+            {
+                return metadataValue.Kind switch
+                {
+                    MetadataValueKind.Date => metadataValue.Date?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                    MetadataValueKind.Integer => metadataValue.Integer?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                    MetadataValueKind.Decimal => metadataValue.Decimal?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                    MetadataValueKind.Rating => metadataValue.Rating?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                    MetadataValueKind.Boolean => metadataValue.Boolean?.ToString().ToLowerInvariant() ?? string.Empty,
+                    MetadataValueKind.MultipleText => string.Join("; ", metadataValue.TextValues),
+                    MetadataValueKind.Image or MetadataValueKind.ImageCollection => string.Empty,
+                    _ => string.IsNullOrWhiteSpace(metadataValue.Text)
+                        ? string.Join("; ", metadataValue.TextValues)
+                        : metadataValue.Text
+                };
+            }
+
+            if (value is DateTimeOffset dateTimeOffset)
+            {
+                return dateTimeOffset.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            if (value is DateTime dateTime)
+            {
+                return dateTime.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            if (value is TimeSpan duration)
+            {
+                return duration.ToString("c", System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            if (value is string textValue)
+            {
+                return textValue;
+            }
+
+            if (value is System.Collections.IEnumerable enumerable)
+            {
+                return string.Join("; ", enumerable.Cast<object?>().Select(FormatMetadataValue)
+                    .Where(item => !string.IsNullOrWhiteSpace(item)));
+            }
+
+            return value is IFormattable formattable
+                ? formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty
+                : value.ToString() ?? string.Empty;
         }
 
         private async void DeleteMenuItem_Click(object sender, RoutedEventArgs e)

@@ -1404,6 +1404,7 @@ namespace Archivio.ViewModels
         private static void ApplyMetadataToItem(VideoFileItem item, VideoMetadataSnapshot meta)
         {
             item.StructuredMetadata = meta.StructuredMetadata;
+            item.SetTechnicalInfo(meta.TechnicalInfo);
             item.Title = meta.Title;
             item.Participants = meta.Participants;
             item.CatalogNumber = meta.CatalogNumber;

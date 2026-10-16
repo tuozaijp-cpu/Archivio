@@ -67,6 +67,10 @@ namespace Archivio.Models
         public int? SampleRate { get; set; }
         public int? Channels { get; set; }
         public string ChannelLayout { get; set; } = string.Empty;
+        public string Loudness { get; set; } = string.Empty;
+        public string ReplayGain { get; set; } = string.Empty;
+        public string EbuR128Loudness { get; set; } = string.Empty;
+        public string TruePeak { get; set; } = string.Empty;
         public string Encoder { get; set; } = string.Empty;
         public TimeSpan? Duration { get; set; }
     }
