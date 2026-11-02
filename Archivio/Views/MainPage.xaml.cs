@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using System.Diagnostics;
 using Archivio.Controls;
 using Archivio.Models;
 using Archivio.ViewModels;
@@ -35,6 +34,7 @@ namespace Archivio.Views
         private bool _isRestoringLayoutSettings;
         private bool _isThumbnailSheetGenerating;
         private string? _ffmpegPath;
+        private readonly FfmpegMediaService _ffmpegMediaService = new();
         private static MetadataFieldDefinition[] ListFieldDefinitions => MetadataFieldCatalog.ListFields.ToArray();
         private static MetadataFieldDefinition[] DetailFieldDefinitions => MetadataFieldCatalog.DetailFields.ToArray();
         private readonly Dictionary<string, FrameworkElement> _detailControls = new(StringComparer.Ordinal);
@@ -42,11 +42,12 @@ namespace Archivio.Views
         public MainPage()
         {
             this.InitializeComponent();
+            var settings = SettingsManager.LoadSettings();
             DataContext = new MainPageViewModel();
             BuildDynamicEditableFields();
             RegisterDetailControls();
             BuildDynamicTechnicalFields();
-            DirectFileWriteModeCheckBox.IsChecked = SettingsManager.LoadSettings().UseDirectFileWriteMode;
+            DirectFileWriteModeCheckBox.IsChecked = settings.UseDirectFileWriteMode;
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
             Unloaded += MainPage_Unloaded;
             VideoThumbnailGridView.ContextFlyout = VideoListDataGrid.ContextFlyout;
@@ -391,25 +392,7 @@ namespace Archivio.Views
                 item.StructuredMetadata.CustomFields[id] = metadataValue;
             }
 
-            metadataValue.Kind = field.ValueType switch
-            {
-                MetadataFieldValueType.MultipleText => MetadataValueKind.MultipleText,
-                MetadataFieldValueType.Date => MetadataValueKind.Date,
-                MetadataFieldValueType.Integer => MetadataValueKind.Integer,
-                MetadataFieldValueType.Decimal => MetadataValueKind.Decimal,
-                MetadataFieldValueType.Boolean => MetadataValueKind.Boolean,
-                MetadataFieldValueType.Rating => MetadataValueKind.Rating,
-                _ => MetadataValueKind.Text
-            };
-            metadataValue.Text = value;
-            metadataValue.TextValues = field.ValueType == MetadataFieldValueType.MultipleText
-                ? value.Split(new[] { '\r', '\n', ';' }, StringSplitOptions.RemoveEmptyEntries).Select(entry => entry.Trim()).ToList()
-                : new List<string>();
-            if (field.ValueType == MetadataFieldValueType.Integer && long.TryParse(value, out var integer)) metadataValue.Integer = integer;
-            if (field.ValueType == MetadataFieldValueType.Decimal && decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var decimalValue)) metadataValue.Decimal = decimalValue;
-            if (field.ValueType == MetadataFieldValueType.Rating && decimal.TryParse(value, out var rating)) metadataValue.Rating = rating;
-            if (field.ValueType == MetadataFieldValueType.Boolean && bool.TryParse(value, out var boolean)) metadataValue.Boolean = boolean;
-            if (field.ValueType == MetadataFieldValueType.Date && DateTimeOffset.TryParse(value, out var date)) metadataValue.Date = date;
+            metadataValue.SetEditorValue(field.ValueType, value);
             item.MarkCustomMetadataFieldChanged(id);
         }
 
@@ -424,11 +407,7 @@ namespace Archivio.Views
                     if (!_detailControls.TryGetValue(field.Id, out var control)) continue;
                     MetadataValue? value = null;
                     if (item is not null) item.StructuredMetadata.CustomFields.TryGetValue(field.Id, out value);
-                    var text = value?.Text ?? value?.Date?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)
-                        ?? value?.Integer?.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                        ?? value?.Decimal?.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                        ?? value?.Rating?.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                        ?? value?.Boolean?.ToString() ?? string.Join(Environment.NewLine, value?.TextValues ?? new List<string>());
+                    var text = value?.ToEditorText() ?? string.Empty;
                     switch (control)
                     {
                         case TextBox textBox when textBox.Text != text:
@@ -535,7 +514,7 @@ namespace Archivio.Views
                     TechnicalColumn.Width = new GridLength(settings.TechnicalColumnWidth, GridUnitType.Pixel);
                 }
 
-                var visibleFieldIds = NormalizeVisibleListFieldIds(settings.VisibleListFieldIds);
+                var visibleFieldIds = SettingsManager.NormalizeVisibleListFieldIds(settings.VisibleListFieldIds);
 
                 foreach (var column in VideoListDataGrid.Columns)
                 {
@@ -561,19 +540,7 @@ namespace Archivio.Views
                     }
                 }
 
-                var savedOrder = settings.ListFieldOrder;
-                if (savedOrder.Count == 0 && settings.ColumnOrder.Count > 0)
-                {
-                    var legacyIds = ListFieldDefinitions
-                        .Where(field => field.ExistingColumnTag is not null)
-                        .ToDictionary(field => field.ExistingColumnTag!, field => field.Id, StringComparer.Ordinal);
-                    savedOrder = settings.ColumnOrder
-                        .Where(legacyIds.ContainsKey)
-                        .Select(tag => legacyIds[tag])
-                        .ToList();
-                }
-
-                var normalizedOrder = NormalizeColumnOrder(savedOrder);
+                var normalizedOrder = SettingsManager.NormalizeListFieldOrder(settings.ListFieldOrder);
                 for (var index = 0; index < normalizedOrder.Count; index++)
                 {
                     var column = VideoListDataGrid.Columns.FirstOrDefault(candidate =>
@@ -620,7 +587,7 @@ namespace Archivio.Views
                 settings.PropertiesColumnWidth = PropertiesColumn.Width.Value;
                 settings.TechnicalColumnWidth = TechnicalColumn.Width.Value;
 
-                settings.ListFieldOrder = NormalizeColumnOrder(VideoListDataGrid.Columns
+                settings.ListFieldOrder = SettingsManager.NormalizeListFieldOrder(VideoListDataGrid.Columns
                     .OrderBy(c => c.DisplayIndex)
                     .Select(c => c.Tag as string)
                     .Where(tag => !string.IsNullOrEmpty(tag))
@@ -632,7 +599,7 @@ namespace Archivio.Views
                     .Where(fieldId => !string.IsNullOrEmpty(fieldId))
                     .Distinct(StringComparer.Ordinal)
                     .ToList()!;
-                settings.VisibleListFieldIds = NormalizeVisibleListFieldIds(visibleFieldIds).ToList();
+                settings.VisibleListFieldIds = SettingsManager.NormalizeVisibleListFieldIds(visibleFieldIds).ToList();
 
                 settings.ListFieldWidths ??= new Dictionary<string, double>(StringComparer.Ordinal);
                 foreach (var column in VideoListDataGrid.Columns)
@@ -696,110 +663,10 @@ namespace Archivio.Views
             }
         }
 
-        private static HashSet<string> NormalizeVisibleListFieldIds(IEnumerable<string?>? requestedIds)
-        {
-            var knownIds = ListFieldDefinitions.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
-            var normalized = (requestedIds ?? Array.Empty<string>())
-                .Where(fieldId => fieldId is not null && knownIds.Contains(fieldId))
-                .Select(fieldId => fieldId!)
-                .ToHashSet(StringComparer.Ordinal);
-
-            if (normalized.Count > 0)
-            {
-                return normalized;
-            }
-
-            normalized = ListFieldDefinitions
-                .Where(field => field.IsInListByDefault)
-                .Select(field => field.Id)
-                .ToHashSet(StringComparer.Ordinal);
-
-            if (normalized.Count == 0 && ListFieldDefinitions.Length > 0)
-            {
-                normalized.Add(ListFieldDefinitions[0].Id);
-            }
-
-            return normalized;
-        }
-
-        private static List<string> NormalizeColumnOrder(IEnumerable<string>? requestedOrder)
-        {
-            var normalized = new List<string>();
-            var knownIds = ListFieldDefinitions.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-
-            foreach (var fieldId in requestedOrder ?? Array.Empty<string>())
-            {
-                if (knownIds.Contains(fieldId) && seen.Add(fieldId))
-                {
-                    normalized.Add(fieldId);
-                }
-            }
-
-            foreach (var field in ListFieldDefinitions)
-            {
-                if (seen.Add(field.Id))
-                {
-                    normalized.Add(field.Id);
-                }
-            }
-
-            return normalized;
-        }
-
-        private static List<string> NormalizeDetailFieldOrder(IEnumerable<string>? requestedOrder)
-        {
-            var normalized = new List<string>();
-            var knownIds = DetailFieldDefinitions.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-
-            foreach (var fieldId in requestedOrder ?? Array.Empty<string>())
-            {
-                if (knownIds.Contains(fieldId) && seen.Add(fieldId))
-                {
-                    normalized.Add(fieldId);
-                }
-            }
-
-            foreach (var field in DetailFieldDefinitions)
-            {
-                if (seen.Add(field.Id))
-                {
-                    normalized.Add(field.Id);
-                }
-            }
-
-            return normalized;
-        }
-
-        private static HashSet<string> NormalizeVisibleDetailFieldIds(IEnumerable<string?>? requestedIds)
-        {
-            var knownIds = DetailFieldDefinitions.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
-            var normalized = (requestedIds ?? Array.Empty<string?>())
-                .Where(fieldId => fieldId is not null && knownIds.Contains(fieldId))
-                .Select(fieldId => fieldId!)
-                .ToHashSet(StringComparer.Ordinal);
-
-            if (normalized.Count == 0)
-            {
-                normalized = DetailFieldDefinitions
-                    .Where(field => field.IsInDetailsByDefault)
-                    .Select(field => field.Id)
-                    .ToHashSet(StringComparer.Ordinal);
-            }
-
-            if (normalized.Count == 0 && DetailFieldDefinitions.Length > 0)
-            {
-                normalized.Add(DetailFieldDefinitions[0].Id);
-            }
-
-            return normalized;
-        }
-
         private void ApplyDetailFieldSettings(AppSettings settings)
         {
-            var order = NormalizeDetailFieldOrder(settings.DetailFieldOrder);
-            var visibleIds = NormalizeVisibleDetailFieldIds(settings.VisibleDetailFieldIds);
+            var order = SettingsManager.NormalizeDetailFieldOrder(settings.DetailFieldOrder);
+            var visibleIds = SettingsManager.NormalizeVisibleDetailFieldIds(settings.VisibleDetailFieldIds);
 
             var editableFields = DetailFieldDefinitions
                 .Where(field => (field.IsEditable || field.IsCustom) && field.Category != MetadataFieldCategory.Artwork)
@@ -956,8 +823,8 @@ namespace Archivio.Views
         private async void ConfigureDetailsButton_ClickCore(object sender, RoutedEventArgs e)
         {
             var settings = SettingsManager.LoadSettings();
-            var detailOrder = NormalizeDetailFieldOrder(settings.DetailFieldOrder);
-            var visibleIds = NormalizeVisibleDetailFieldIds(GetVisibleDetailFieldIds());
+            var detailOrder = SettingsManager.NormalizeDetailFieldOrder(settings.DetailFieldOrder);
+            var visibleIds = SettingsManager.NormalizeVisibleDetailFieldIds(GetVisibleDetailFieldIds());
             var fieldGroup = CreateDetailFieldGroup(DetailFieldDefinitions, visibleIds, detailOrder);
 
             var validationText = new TextBlock
@@ -995,7 +862,7 @@ namespace Archivio.Views
                 return;
             }
 
-            settings.VisibleDetailFieldIds = NormalizeVisibleDetailFieldIds(
+            settings.VisibleDetailFieldIds = SettingsManager.NormalizeVisibleDetailFieldIds(
                 GetCheckedDetailOptionIds(fieldGroup)).ToList();
             settings.DetailFieldOrder = GetDetailOptionIds(fieldGroup);
             ApplyDetailFieldSettings(settings);
@@ -1140,7 +1007,7 @@ namespace Archivio.Views
 
         private async void ConfigureColumnsButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            var visibleIds = NormalizeVisibleListFieldIds(VideoListDataGrid.Columns
+            var visibleIds = SettingsManager.NormalizeVisibleListFieldIds(VideoListDataGrid.Columns
                 .Where(column => column.Visibility == Visibility.Visible)
                 .Select(column => column.Tag as string)
                 .Where(fieldId => !string.IsNullOrEmpty(fieldId)));
@@ -1533,7 +1400,7 @@ namespace Archivio.Views
 
         private async void AddImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanAddCoverArt || _isPlaybackView)
+            if (!ViewModel.CanAddCoverArt || _isPlaybackView || _isThumbnailSheetGenerating)
             {
                 return;
             }
@@ -1555,6 +1422,7 @@ namespace Archivio.Views
             if (selectedVideo is null
                 || !ViewModel.CanAddCoverArt
                 || _isPlaybackView
+                || _isThumbnailSheetGenerating
                 || !e.DataView.Contains(StandardDataFormats.StorageItems))
             {
                 return;
@@ -1593,7 +1461,8 @@ namespace Archivio.Views
                 replace = result == ContentDialogResult.Secondary;
             }
 
-            if (ViewModel.SelectedVideo != selectedVideo || !ViewModel.CanAddCoverArt || _isPlaybackView)
+            if (ViewModel.SelectedVideo != selectedVideo || !ViewModel.CanAddCoverArt
+                || _isPlaybackView || _isThumbnailSheetGenerating)
             {
                 return;
             }
@@ -1616,184 +1485,122 @@ namespace Archivio.Views
             }
 
             if (!_isPlaybackView || _videoPlayerElement?.Source is null || _playbackPlayer is null
-                || ViewModel.SelectedVideo is null)
+                || ViewModel.SelectedVideo is not { } targetVideo)
             {
                 ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_CaptureFramePlaybackRequired"));
                 return;
             }
 
-            var ffmpegPath = await GetFfmpegPathAsync();
-            if (ffmpegPath is null)
-            {
-                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_FFmpegMissing"));
-                return;
-            }
-
-            string? outputPath = null;
+            var cancellationToken = _playbackLoadCts?.Token ?? CancellationToken.None;
+            var position = _playbackPlayer.PlaybackSession?.Position ?? TimeSpan.Zero;
             try
             {
-                var file = await ViewModel.SelectedVideo.GetFileAsync();
-                outputPath = Path.Combine(Path.GetTempPath(), $"archivio-frame-{Guid.NewGuid():N}.png");
-                var position = _playbackPlayer.PlaybackSession?.Position ?? TimeSpan.Zero;
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = ffmpegPath,
-                    UseShellExecute = false,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-                startInfo.ArgumentList.Add("-hide_banner");
-                startInfo.ArgumentList.Add("-loglevel");
-                startInfo.ArgumentList.Add("error");
-                startInfo.ArgumentList.Add("-ss");
-                startInfo.ArgumentList.Add(Math.Max(0, position.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture));
-                startInfo.ArgumentList.Add("-i");
-                startInfo.ArgumentList.Add(file.Path);
-                startInfo.ArgumentList.Add("-frames:v");
-                startInfo.ArgumentList.Add("1");
-                startInfo.ArgumentList.Add("-f");
-                startInfo.ArgumentList.Add("image2");
-                startInfo.ArgumentList.Add("-c:v");
-                startInfo.ArgumentList.Add("png");
-                startInfo.ArgumentList.Add("-y");
-                startInfo.ArgumentList.Add(outputPath);
-
-                using var process = Process.Start(startInfo)
-                    ?? throw new InvalidOperationException("FFmpegを起動できませんでした。");
-                var error = await process.StandardError.ReadToEndAsync();
-                await process.WaitForExitAsync();
-                if (process.ExitCode != 0 || !File.Exists(outputPath))
-                {
-                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(error)
-                        ? LanguageManager.GetString("Msg_CaptureFrameUnavailable")
-                        : error.Trim());
-                }
-
-                var data = await File.ReadAllBytesAsync(outputPath);
-                await ViewModel.Details.AddGeneratedCoverArtImageAsync(
-                    data,
-                    "image/png",
-                    $"Archivio capture {position:hh\\:mm\\:ss}");
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error("動画フレームのキャプチャに失敗しました", ex, ViewModel.SelectedVideo?.FullPath);
-                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_CaptureFrameFailed", ex.Message));
-            }
-            finally
-            {
-                if (!string.IsNullOrWhiteSpace(outputPath))
-                {
-                    try { if (File.Exists(outputPath)) File.Delete(outputPath); }
-                    catch (Exception ex) { AppLogger.Error("一時キャプチャ画像の削除に失敗しました", ex, outputPath); }
-                }
-            }
-        }
-
-        private async void CreateThumbnailSheetButton_ClickCore(object sender, RoutedEventArgs e)
-        {
-            if (_isThumbnailSheetGenerating || !ViewModel.CanStartVideoFileActions || ViewModel.SelectedVideo is null)
-            {
-                return;
-            }
-
-            _isThumbnailSheetGenerating = true;
-            UpdateActionButtonStates();
-            string? outputPath = null;
-            try
-            {
-                var ffmpegPath = await GetFfmpegPathAsync();
+                var ffmpegPath = await GetFfmpegPathAsync(cancellationToken);
                 if (ffmpegPath is null)
                 {
                     ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_FFmpegMissing"));
                     return;
                 }
 
-                var file = await ViewModel.SelectedVideo.GetFileAsync();
-                outputPath = Path.Combine(Path.GetTempPath(), $"archivio-sheet-{Guid.NewGuid():N}.png");
-                var duration = ViewModel.SelectedVideo.DurationValue?.TotalSeconds
-                    ?? ViewModel.SelectedVideo.TechnicalInfo.Duration?.TotalSeconds
-                    ?? 0;
-                if (duration <= 0)
+                var file = await targetVideo.GetFileAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+                var data = await _ffmpegMediaService.CaptureFrameAsync(
+                    ffmpegPath,
+                    file.Path,
+                    position,
+                    cancellationToken);
+                if (ViewModel.SelectedVideo != targetVideo || !_isPlaybackView)
+                {
+                    return;
+                }
+
+                await ViewModel.Details.AddGeneratedCoverArtImageAsync(
+                    data,
+                    "image/png",
+                    $"Archivio capture {position:hh\\:mm\\:ss}");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("動画フレームのキャプチャに失敗しました", ex, targetVideo.FullPath);
+                var error = ex is FfmpegMediaProcessingException mediaError
+                    && string.IsNullOrWhiteSpace(mediaError.ErrorText)
+                    ? LanguageManager.GetString("Msg_CaptureFrameUnavailable")
+                    : ex.Message;
+                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_CaptureFrameFailed", error));
+            }
+        }
+
+        private async void CreateThumbnailSheetButton_ClickCore(object sender, RoutedEventArgs e)
+        {
+            if (_isThumbnailSheetGenerating || _isPlaybackView
+                || !ViewModel.CanStartVideoFileActions || ViewModel.SelectedVideo is not { } targetVideo)
+            {
+                return;
+            }
+
+            _isThumbnailSheetGenerating = true;
+            UpdateActionButtonStates();
+            var cancellationToken = _playbackLoadCts?.Token ?? CancellationToken.None;
+            try
+            {
+                var ffmpegPath = await GetFfmpegPathAsync(cancellationToken);
+                if (ffmpegPath is null)
+                {
+                    ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_FFmpegMissing"));
+                    return;
+                }
+
+                var file = await targetVideo.GetFileAsync();
+                var duration = targetVideo.DurationValue
+                    ?? targetVideo.TechnicalInfo.Duration
+                    ?? TimeSpan.Zero;
+                if (duration <= TimeSpan.Zero)
                 {
                     // 動画を再生していなくても、選択直後の非同期読み込みが完了していない場合に
                     // ここで技術情報を直接取得してサムネイル生成を継続する。
-                    var probeResult = await new MediaProbeService().ProbeAsync(file);
-                    duration = probeResult.Duration?.TotalSeconds
-                        ?? probeResult.Technical.Duration?.TotalSeconds
-                        ?? 0;
+                    var probeResult = await new MediaProbeService().ProbeAsync(file, cancellationToken);
+                    duration = probeResult.Duration
+                        ?? probeResult.Technical.Duration
+                        ?? TimeSpan.Zero;
                 }
-                if (duration <= 0)
+                if (duration <= TimeSpan.Zero)
                 {
                     throw new InvalidOperationException("動画の再生時間を取得できないため、サムネイルを作成できません。");
                 }
 
-                // 動画全体を fps フィルターでデコードすると長時間動画ほど遅くなるため、
-                // 各区間の中央へ直接シークして25フレームだけ取得する。
-                var filterParts = new List<string>(25);
-                var startInfo = new ProcessStartInfo
+                cancellationToken.ThrowIfCancellationRequested();
+                var data = await _ffmpegMediaService.CreateThumbnailSheetAsync(
+                    ffmpegPath,
+                    file.Path,
+                    duration,
+                    cancellationToken);
+                if (ViewModel.SelectedVideo != targetVideo || _isPlaybackView)
                 {
-                    FileName = ffmpegPath,
-                    UseShellExecute = false,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-                startInfo.ArgumentList.Add("-hide_banner");
-                startInfo.ArgumentList.Add("-loglevel");
-                startInfo.ArgumentList.Add("error");
-                for (var index = 0; index < 25; index++)
-                {
-                    var timestamp = duration * (index + 0.5) / 25.0;
-                    startInfo.ArgumentList.Add("-ss");
-                    startInfo.ArgumentList.Add(timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                    startInfo.ArgumentList.Add("-i");
-                    startInfo.ArgumentList.Add(file.Path);
-                    filterParts.Add($"[{index}:v:0]trim=end_frame=1,setpts=PTS-STARTPTS,scale=320:-2[s{index}]");
+                    return;
                 }
 
-                var tileInputs = string.Concat(Enumerable.Range(0, 25).Select(index => $"[s{index}]"));
-                var filter = string.Join(";", filterParts)
-                    + $";{tileInputs}concat=n=25:v=1:a=0[frames];[frames]tile=5x5:padding=4:margin=4:color=black[v]";
-                startInfo.ArgumentList.Add("-filter_complex");
-                startInfo.ArgumentList.Add(filter);
-                startInfo.ArgumentList.Add("-map");
-                startInfo.ArgumentList.Add("[v]");
-                startInfo.ArgumentList.Add("-frames:v");
-                startInfo.ArgumentList.Add("1");
-                startInfo.ArgumentList.Add("-an");
-                startInfo.ArgumentList.Add("-y");
-                startInfo.ArgumentList.Add(outputPath);
-
-                using var process = Process.Start(startInfo)
-                    ?? throw new InvalidOperationException("FFmpegを起動できませんでした。");
-                var error = await process.StandardError.ReadToEndAsync();
-                await process.WaitForExitAsync();
-                if (process.ExitCode != 0 || !File.Exists(outputPath))
-                {
-                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(error)
-                        ? "FFmpegでサムネイルリストを作成できませんでした。"
-                        : error.Trim());
-                }
-
-                var data = await File.ReadAllBytesAsync(outputPath);
                 await ViewModel.Details.AddGeneratedCoverArtImageAsync(
                     data,
                     "image/png",
                     "Archivio thumbnail sheet");
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
             catch (Exception ex)
             {
-                AppLogger.Error("サムネイルリストの生成に失敗しました", ex, ViewModel.SelectedVideo?.FullPath);
-                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_ThumbnailSheetFailed", ex.Message));
+                AppLogger.Error("サムネイルリストの生成に失敗しました", ex, targetVideo.FullPath);
+                var error = ex is FfmpegMediaProcessingException mediaError
+                    && string.IsNullOrWhiteSpace(mediaError.ErrorText)
+                    ? "FFmpegでサムネイルリストを作成できませんでした。"
+                    : ex.Message;
+                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_ThumbnailSheetFailed", error));
             }
             finally
             {
-                if (!string.IsNullOrWhiteSpace(outputPath))
-                {
-                    try { if (File.Exists(outputPath)) File.Delete(outputPath); }
-                    catch (Exception ex) { AppLogger.Error("一時サムネイルの削除に失敗しました", ex, outputPath); }
-                }
-
                 _isThumbnailSheetGenerating = false;
                 UpdateActionButtonStates();
             }
@@ -1801,76 +1608,32 @@ namespace Archivio.Views
 
         private async Task InitializeFfmpegAsync()
         {
-            _ffmpegPath = await FindFfmpegAsync();
-            UpdateActionButtonStates();
+            try
+            {
+                _ffmpegPath = await _ffmpegMediaService.FindFfmpegAsync(SettingsManager.LoadSettings().FfprobePath);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("FFmpegの検索に失敗しました", ex);
+            }
+            finally
+            {
+                UpdateActionButtonStates();
+            }
         }
 
-        private async Task<string?> GetFfmpegPathAsync()
+        private async Task<string?> GetFfmpegPathAsync(CancellationToken cancellationToken = default)
         {
-            _ffmpegPath ??= await FindFfmpegAsync();
+            _ffmpegPath ??= await _ffmpegMediaService.FindFfmpegAsync(
+                SettingsManager.LoadSettings().FfprobePath,
+                cancellationToken);
             UpdateActionButtonStates();
             return _ffmpegPath;
         }
 
-        private static async Task<string?> FindFfmpegAsync()
-        {
-            var configuredFfprobe = SettingsManager.LoadSettings().FfprobePath;
-            if (!string.IsNullOrWhiteSpace(configuredFfprobe))
-            {
-                var configuredPath = configuredFfprobe.Trim().Trim('"');
-                if (Path.GetFileName(configuredPath).Equals("ffmpeg.exe", StringComparison.OrdinalIgnoreCase)
-                    && File.Exists(configuredPath))
-                {
-                    return configuredPath;
-                }
-
-                var directory = Path.GetDirectoryName(configuredPath);
-                if (!string.IsNullOrWhiteSpace(directory))
-                {
-                    var sibling = Path.Combine(directory, "ffmpeg.exe");
-                    if (File.Exists(sibling)) return sibling;
-                }
-            }
-
-            // `where.exe` may not see PATH changes made after the app was started.
-            // Check the current process PATH as well as the normal Windows lookup.
-            var pathEntries = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-                .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            foreach (var directory in pathEntries)
-            {
-                try
-                {
-                    var candidate = Path.Combine(directory.Trim('"'), "ffmpeg.exe");
-                    if (File.Exists(candidate)) return candidate;
-                }
-                catch (ArgumentException)
-                {
-                    // Ignore malformed PATH entries.
-                }
-            }
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "where.exe",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                CreateNoWindow = true
-            };
-            startInfo.ArgumentList.Add("ffmpeg.exe");
-            using var process = Process.Start(startInfo);
-            if (process is null) return null;
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            if (process.ExitCode != 0) return null;
-
-            return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(path => path.Trim().Trim('"'))
-                .FirstOrDefault(File.Exists);
-        }
-
         private async void ReplaceImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanModifyCoverArt || _isPlaybackView)
+            if (!ViewModel.CanModifyCoverArt || _isPlaybackView || _isThumbnailSheetGenerating)
             {
                 return;
             }
@@ -1880,7 +1643,7 @@ namespace Archivio.Views
 
         private void DeleteImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanModifyCoverArt || _isPlaybackView)
+            if (!ViewModel.CanModifyCoverArt || _isPlaybackView || _isThumbnailSheetGenerating)
             {
                 return;
             }
@@ -1999,15 +1762,16 @@ namespace Archivio.Views
         private void UpdateActionButtonStates()
         {
             var canInteractWithFile = ViewModel.CanStartVideoFileActions && !_isPlaybackView;
+            var canEditCoverArt = canInteractWithFile && !_isThumbnailSheetGenerating;
             VideoPlaybackToggleButton.IsEnabled = CanStartVideoPlayback && !_isPlaybackView;
             CoverArtViewToggleButton.IsEnabled = ViewModel.CanStartVideoFileActions;
             UpdateCaptureFrameButtonState();
             CreateThumbnailSheetButton.IsEnabled = canInteractWithFile
                 && _ffmpegPath is not null
                 && !_isThumbnailSheetGenerating;
-            AddImageButton.IsEnabled = canInteractWithFile && ViewModel.CanAddCoverArt;
-            ReplaceImageButton.IsEnabled = canInteractWithFile && ViewModel.CanModifyCoverArt;
-            DeleteImageButton.IsEnabled = canInteractWithFile && ViewModel.CanModifyCoverArt;
+            AddImageButton.IsEnabled = canEditCoverArt && ViewModel.CanAddCoverArt;
+            ReplaceImageButton.IsEnabled = canEditCoverArt && ViewModel.CanModifyCoverArt;
+            DeleteImageButton.IsEnabled = canEditCoverArt && ViewModel.CanModifyCoverArt;
             SaveImageButton.IsEnabled = canInteractWithFile && ViewModel.CanSaveCoverArt;
             SaveMetadataButton.IsEnabled = canInteractWithFile && ViewModel.CanSaveMetadata;
             ThumbnailSheetProgressRing.IsActive = _isThumbnailSheetGenerating;

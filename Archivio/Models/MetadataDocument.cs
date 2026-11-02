@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace Archivio.Models
@@ -350,5 +351,45 @@ namespace Archivio.Models
         public decimal? Rating { get; set; }
         public bool? Boolean { get; set; }
         public List<ArtworkAsset> Images { get; set; } = new();
+
+        internal void SetEditorValue(MetadataFieldValueType valueType, string value)
+        {
+            Kind = valueType switch
+            {
+                MetadataFieldValueType.MultipleText => MetadataValueKind.MultipleText,
+                MetadataFieldValueType.Date => MetadataValueKind.Date,
+                MetadataFieldValueType.Integer => MetadataValueKind.Integer,
+                MetadataFieldValueType.Decimal => MetadataValueKind.Decimal,
+                MetadataFieldValueType.Boolean => MetadataValueKind.Boolean,
+                MetadataFieldValueType.Rating => MetadataValueKind.Rating,
+                _ => MetadataValueKind.Text
+            };
+            Text = value;
+            TextValues = valueType == MetadataFieldValueType.MultipleText
+                ? value.Split(new[] { '\r', '\n', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(entry => entry.Trim())
+                    .ToList()
+                : new List<string>();
+            if (valueType == MetadataFieldValueType.Integer && long.TryParse(value, out var integer)) Integer = integer;
+            if (valueType == MetadataFieldValueType.Decimal
+                && decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var decimalValue))
+            {
+                Decimal = decimalValue;
+            }
+            if (valueType == MetadataFieldValueType.Rating && decimal.TryParse(value, out var rating)) Rating = rating;
+            if (valueType == MetadataFieldValueType.Boolean && bool.TryParse(value, out var boolean)) Boolean = boolean;
+            if (valueType == MetadataFieldValueType.Date && DateTimeOffset.TryParse(value, out var date)) Date = date;
+        }
+
+        internal string ToEditorText()
+        {
+            return Text
+                ?? Date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                ?? Integer?.ToString(CultureInfo.InvariantCulture)
+                ?? Decimal?.ToString(CultureInfo.InvariantCulture)
+                ?? Rating?.ToString(CultureInfo.InvariantCulture)
+                ?? Boolean?.ToString()
+                ?? string.Join(Environment.NewLine, TextValues ?? new List<string>());
+        }
     }
 }

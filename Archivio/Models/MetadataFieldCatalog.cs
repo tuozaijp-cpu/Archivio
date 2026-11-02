@@ -309,12 +309,7 @@ namespace Archivio.Models
 
         internal static IReadOnlyList<MetadataFieldDefinition> All
         {
-            get
-            {
-                if (_cachedDefinitions is not null) return _cachedDefinitions;
-                RefreshCustomFields(ViewModels.SettingsManager.LoadSettings().CustomMetadataFields);
-                return _cachedDefinitions!;
-            }
+            get => _cachedDefinitions ?? StandardFieldDefinitions;
         }
 
         internal static void RefreshCustomFields(IEnumerable<CustomMetadataFieldDefinition>? custom)

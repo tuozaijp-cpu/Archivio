@@ -86,8 +86,15 @@ namespace Archivio.ViewModels
                     AppLogger.Error("設定ファイルの読み込みに失敗しました", ex, SettingsFile);
                 }
 
-                return new AppSettings();
+                return CreateDefaultSettings();
             }
+        }
+
+        private static AppSettings CreateDefaultSettings()
+        {
+            var settings = new AppSettings();
+            NormalizeMetadataLayoutSettings(settings);
+            return settings;
         }
 
         /// <summary>
@@ -103,8 +110,6 @@ namespace Archivio.ViewModels
             settings.ListFieldWidths ??= new Dictionary<string, double>();
             settings.DetailFieldOrder ??= new List<string>();
 
-            // All を初回参照する際に SettingsManager.LoadSettings() を再入しないよう、
-            // この設定に含まれるカスタム項目を先にカタログへ反映します。
             MetadataFieldCatalog.RefreshCustomFields(settings.CustomMetadataFields);
             var listFields = MetadataFieldCatalog.ListFields;
             var legacyIds = listFields
@@ -129,29 +134,92 @@ namespace Archivio.ViewModels
                 }
             }
 
-            var knownListIds = listFields.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
-            settings.ListFieldOrder = settings.ListFieldOrder
-                .Where(knownListIds.Contains)
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
+            settings.ListFieldOrder = FilterKnownFieldOrder(MetadataFieldCatalog.ListFields, settings.ListFieldOrder);
             settings.VisibleListFieldIds = settings.VisibleListFieldIds is null
                 ? null
-                : settings.VisibleListFieldIds
-                    .Where(knownListIds.Contains)
-                    .Distinct(StringComparer.Ordinal)
-                    .ToList();
+                : FilterKnownFieldIds(MetadataFieldCatalog.ListFields, settings.VisibleListFieldIds);
 
-            var knownDetailIds = MetadataFieldCatalog.DetailFields.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
-            settings.DetailFieldOrder = settings.DetailFieldOrder
-                .Where(knownDetailIds.Contains)
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
+            settings.DetailFieldOrder = FilterKnownFieldOrder(MetadataFieldCatalog.DetailFields, settings.DetailFieldOrder);
             settings.VisibleDetailFieldIds = settings.VisibleDetailFieldIds is null
                 ? null
-                : settings.VisibleDetailFieldIds
-                    .Where(knownDetailIds.Contains)
-                    .Distinct(StringComparer.Ordinal)
-                    .ToList();
+                : FilterKnownFieldIds(MetadataFieldCatalog.DetailFields, settings.VisibleDetailFieldIds);
+        }
+
+        internal static HashSet<string> NormalizeVisibleListFieldIds(IEnumerable<string?>? requestedIds)
+        {
+            var fields = MetadataFieldCatalog.ListFields;
+            var knownIds = fields.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
+            var normalized = (requestedIds ?? Array.Empty<string?>())
+                .Where(fieldId => fieldId is not null && knownIds.Contains(fieldId))
+                .Select(fieldId => fieldId!)
+                .ToHashSet(StringComparer.Ordinal);
+            if (normalized.Count > 0) return normalized;
+
+            normalized = fields.Where(field => field.IsInListByDefault)
+                .Select(field => field.Id)
+                .ToHashSet(StringComparer.Ordinal);
+            if (normalized.Count == 0 && fields.Count > 0) normalized.Add(fields[0].Id);
+            return normalized;
+        }
+
+        internal static List<string> NormalizeListFieldOrder(IEnumerable<string>? requestedOrder)
+            => NormalizeFieldOrder(MetadataFieldCatalog.ListFields, requestedOrder);
+
+        internal static List<string> NormalizeDetailFieldOrder(IEnumerable<string>? requestedOrder)
+            => NormalizeFieldOrder(MetadataFieldCatalog.DetailFields, requestedOrder);
+
+        internal static HashSet<string> NormalizeVisibleDetailFieldIds(IEnumerable<string?>? requestedIds)
+        {
+            var fields = MetadataFieldCatalog.DetailFields;
+            var knownIds = fields.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
+            var normalized = (requestedIds ?? Array.Empty<string?>())
+                .Where(fieldId => fieldId is not null && knownIds.Contains(fieldId))
+                .Select(fieldId => fieldId!)
+                .ToHashSet(StringComparer.Ordinal);
+            if (normalized.Count > 0) return normalized;
+
+            normalized = fields.Where(field => field.IsInDetailsByDefault)
+                .Select(field => field.Id)
+                .ToHashSet(StringComparer.Ordinal);
+            if (normalized.Count == 0 && fields.Count > 0) normalized.Add(fields[0].Id);
+            return normalized;
+        }
+
+        private static List<string> NormalizeFieldOrder(
+            IReadOnlyList<MetadataFieldDefinition> fields,
+            IEnumerable<string>? requestedOrder)
+        {
+            var normalized = FilterKnownFieldOrder(fields, requestedOrder);
+            var seen = normalized.ToHashSet(StringComparer.Ordinal);
+            foreach (var field in fields)
+            {
+                if (seen.Add(field.Id)) normalized.Add(field.Id);
+            }
+
+            return normalized;
+        }
+
+        private static List<string> FilterKnownFieldOrder(
+            IReadOnlyList<MetadataFieldDefinition> fields,
+            IEnumerable<string>? requestedOrder)
+        {
+            var normalized = new List<string>();
+            var knownIds = fields.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var fieldId in requestedOrder ?? Array.Empty<string>())
+            {
+                if (knownIds.Contains(fieldId) && seen.Add(fieldId)) normalized.Add(fieldId);
+            }
+
+            return normalized;
+        }
+
+        private static List<string> FilterKnownFieldIds(
+            IReadOnlyList<MetadataFieldDefinition> fields,
+            IEnumerable<string> requestedIds)
+        {
+            var knownIds = fields.Select(field => field.Id).ToHashSet(StringComparer.Ordinal);
+            return requestedIds.Where(knownIds.Contains).Distinct(StringComparer.Ordinal).ToList();
         }
 
         public static void SaveSettings(AppSettings settings)
