@@ -22,6 +22,8 @@ internal static class Program
         {
             Run("metadata filename template service", TestMetadataFileNameTemplateService);
             Run("custom metadata editor value conversion", TestCustomMetadataEditorValueConversion);
+            Run("thumbnail cache capacity and LRU behavior", TestThumbnailCacheCapacityAndLru);
+            Run("thumbnail cache overwrite remove clear and retain", TestThumbnailCacheMutation);
             Run("file save operation state is reference counted", TestFileSaveOperationState);
             Run("FFmpeg playback commands and executable discovery", TestFfmpegMediaService);
             Run("metadata field format capabilities", TestMetadataFieldFormatCapabilities);
@@ -206,6 +208,76 @@ internal static class Program
         dateValue.SetEditorValue(MetadataFieldValueType.Date, "2024-02-03");
         Assert(dateValue.Kind == MetadataValueKind.Date && dateValue.Date?.Date == new DateTimeOffset(2024, 2, 3, 0, 0, 0, TimeSpan.Zero).Date, "date value was not parsed");
         Assert(dateValue.ToEditorText() == "2024-02-03", "date editor value was not formatted");
+    }
+
+    private static void TestThumbnailCacheCapacityAndLru()
+    {
+        var entryLimitCache = new ThumbnailImageCache(maxEntries: 2, maxImageDataBytes: 100);
+        entryLimitCache.Set("one.mp4", CreateThumbnailCacheEntry(2));
+        entryLimitCache.Set("two.mp4", CreateThumbnailCacheEntry(2));
+        Assert(entryLimitCache.TryGet("ONE.mp4", out _), "cache lookup did not use case-insensitive paths");
+        entryLimitCache.Set("three.mp4", CreateThumbnailCacheEntry(2));
+        Assert(!entryLimitCache.TryGet("two.mp4", out _), "least recently used entry was not evicted");
+        Assert(entryLimitCache.TryGet("one.mp4", out _) && entryLimitCache.TryGet("three.mp4", out _), "recent entries were evicted");
+        Assert(entryLimitCache.Count == 2, "entry count limit was exceeded");
+
+        var byteLimitCache = new ThumbnailImageCache(maxEntries: 10, maxImageDataBytes: 6);
+        byteLimitCache.Set("first.mp4", CreateThumbnailCacheEntry(4));
+        byteLimitCache.Set("second.mp4", CreateThumbnailCacheEntry(3));
+        Assert(!byteLimitCache.TryGet("first.mp4", out _), "byte limit did not evict the least recent entry");
+        Assert(byteLimitCache.TryGet("second.mp4", out _), "byte limit evicted the newest entry");
+        Assert(byteLimitCache.ImageDataBytes == 3, "cached image byte total is incorrect after byte eviction");
+
+        byteLimitCache.Set("oversized.mp4", CreateThumbnailCacheEntry(7));
+        Assert(!byteLimitCache.TryGet("oversized.mp4", out _), "oversized image data was retained");
+        Assert(byteLimitCache.ImageDataBytes == 3, "oversized image changed cached byte accounting");
+
+        var oversizedReplacementCache = new ThumbnailImageCache(maxEntries: 2, maxImageDataBytes: 4);
+        oversizedReplacementCache.Set("same.mp4", CreateThumbnailCacheEntry(2));
+        oversizedReplacementCache.Set("SAME.MP4", CreateThumbnailCacheEntry(5));
+        Assert(!oversizedReplacementCache.TryGet("same.mp4", out _), "oversized replacement retained the previous entry");
+        Assert(oversizedReplacementCache.Count == 0 && oversizedReplacementCache.ImageDataBytes == 0,
+            "oversized replacement did not remove the previous entry from cache accounting");
+    }
+
+    private static void TestThumbnailCacheMutation()
+    {
+        var cache = new ThumbnailImageCache(maxEntries: 5, maxImageDataBytes: 20);
+        cache.Set("one.mp4", CreateThumbnailCacheEntry(5));
+        cache.Set("two.mp4", CreateThumbnailCacheEntry(4));
+
+        cache.Set("ONE.MP4", CreateThumbnailCacheEntry(2, fileSize: 20));
+        Assert(cache.Count == 2, "overwriting a case-insensitive path duplicated the entry");
+        Assert(cache.ImageDataBytes == 6, "overwriting an entry did not update byte accounting");
+        Assert(cache.TryGet("one.mp4", out var replaced) && replaced.FileSize == 20 && replaced.ImageData.Length == 2,
+            "overwriting an entry did not replace its value");
+
+        cache.Remove("missing.mp4");
+        cache.Remove("two.mp4");
+        cache.Remove("two.mp4");
+        Assert(cache.Count == 1 && cache.ImageDataBytes == 2, "remove did not update cache state idempotently");
+
+        cache.Set("three.mp4", CreateThumbnailCacheEntry(3));
+        cache.Retain(new[] { "ONE.MP4" });
+        Assert(cache.Count == 1 && cache.TryGet("one.mp4", out _), "retain removed a case-insensitive matching path or kept an obsolete entry");
+
+        cache.Clear();
+        Assert(cache.Count == 0 && cache.ImageDataBytes == 0, "clear did not reset entries and byte accounting");
+        Assert(!cache.TryGet("one.mp4", out _), "clear retained a cached item");
+
+        var zeroCapacityCache = new ThumbnailImageCache(maxEntries: 1, maxImageDataBytes: 0);
+        zeroCapacityCache.Set("empty.mp4", new ThumbnailCacheEntry());
+        Assert(zeroCapacityCache.TryGet("empty.mp4", out _), "zero-byte cache entry should fit a zero-byte budget");
+    }
+
+    private static ThumbnailCacheEntry CreateThumbnailCacheEntry(int dataLength, ulong fileSize = 1)
+    {
+        return new ThumbnailCacheEntry
+        {
+            FileSize = fileSize,
+            LastWriteTime = DateTimeOffset.UnixEpoch,
+            ImageData = new byte[dataLength]
+        };
     }
 
     private static void TestFfmpegMediaService()
