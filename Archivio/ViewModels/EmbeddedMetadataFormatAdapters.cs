@@ -116,12 +116,10 @@ namespace Archivio.ViewModels
             IReadOnlyCollection<string> fieldIds)
         {
             var tag = file.Tag ?? throw new NotSupportedException("ファイル内タグを作成できません。");
-            var isDirty = false;
 
             if (fieldIds.Contains("work.title"))
             {
                 tag.Title = document.Work.Title ?? string.Empty;
-                isDirty = true;
             }
 
             if (fieldIds.Contains("credits.participants"))
@@ -131,13 +129,11 @@ namespace Archivio.ViewModels
                     .Select(credit => credit.PersonName)
                     .Where(value => !string.IsNullOrWhiteSpace(value))
                     .ToArray();
-                isDirty = true;
             }
 
             if (fieldIds.Contains("work.comment"))
             {
                 tag.Comment = document.Work.Comment ?? string.Empty;
-                isDirty = true;
             }
 
             if (fieldIds.Contains("work.category"))
@@ -145,25 +141,21 @@ namespace Archivio.ViewModels
                 tag.Genres = document.Work.Genres
                     .Where(value => !string.IsNullOrWhiteSpace(value))
                     .ToArray();
-                isDirty = true;
             }
 
             if (fieldIds.Contains("identifiers.catalog-number"))
             {
                 tag.Grouping = document.Identifiers.CatalogNumber ?? string.Empty;
-                isDirty = true;
             }
 
             if (fieldIds.Contains("publication.publisher"))
             {
                 WritePublisher(file, string.Join("; ", document.PeopleAndStaff.Publishers));
-                isDirty = true;
             }
 
             if (fieldIds.Contains("publication.label"))
             {
                 tag.Copyright = string.Join("; ", document.PeopleAndStaff.Distributors);
-                isDirty = true;
             }
 
             if (fieldIds.Contains("dates.release"))
@@ -175,13 +167,11 @@ namespace Archivio.ViewModels
                     document.Dates.ReleaseDate is { } date && date.Year > 1900
                         ? date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)
                         : string.Empty);
-                isDirty = true;
             }
 
             if (fieldIds.Contains("evaluation.rating"))
             {
                 WriteArchivioText(file, "evaluation.rating", document.Evaluation.PersonalRatingRaw ?? string.Empty);
-                isDirty = true;
             }
         }
 

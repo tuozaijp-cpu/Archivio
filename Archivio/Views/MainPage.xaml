@@ -168,9 +168,9 @@
                 CornerRadius="4"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                 <TextBlock
-                    MaxWidth="420"
                     Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
                     TextWrapping="WrapWholeWords"
+                    HorizontalAlignment="Stretch"
                     VerticalAlignment="Center" />
             </Border>
         </Grid>

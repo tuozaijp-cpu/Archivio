@@ -29,6 +29,8 @@ internal static class Program
             Run("FFmpeg playback commands and executable discovery", TestFfmpegMediaService);
             Run("metadata field format capabilities", TestMetadataFieldFormatCapabilities);
             Run("create isolated media fixtures", CreateFixtures);
+            Run("file operation naming rules", TestVideoFileOperationNamingRules);
+            Run("CSV row formatting", TestVideoCsvRowFormatting);
             Run("FFmpeg frame capture and thumbnail generation", TestFfmpegMediaProcessing);
             Run("metadata save verification preserves technical information", TestVerificationPreservesTechnicalInformation);
             Run("MP4/MKV saves work in direct and backup modes", TestMetadataSaveModes);
@@ -84,6 +86,38 @@ internal static class Program
         Assert(other.GetFieldSupport("work.title").CanRead && !other.GetFieldSupport("work.title").CanWrite, "other format write policy changed");
         Assert(other.GetFieldSupport("work.subtitle").Capability == MetadataFieldCapability.Unsupported, "other format accepted Archivio field");
         Assert(other.GetFieldCapability("unknown.future-id") == MetadataFieldCapability.Unsupported, "unknown ID was not rejected");
+    }
+
+    private static void TestVideoFileOperationNamingRules()
+    {
+        Assert(VideoFileOperationsService.GetRenameName("video.mp4", "renamed") == "renamed.mp4",
+            "rename rule did not append the source extension");
+        Assert(VideoFileOperationsService.GetRenameName("video.mp4", "renamed.mkv") == "renamed.mp4",
+            "rename rule did not preserve the source extension when the requested extension differed");
+        Assert(VideoFileOperationsService.GetRenameName("video.mp4", "renamed.MP4") == "renamed.MP4",
+            "rename rule changed a matching extension");
+
+        var firstOutput = Path.Combine(_root, "naming-test_ReMUX.mp4");
+        var secondOutput = Path.Combine(_root, "naming-test_ReMUX_2.mp4");
+        IoFile.WriteAllText(firstOutput, "occupied");
+        IoFile.WriteAllText(secondOutput, "occupied");
+        var output = VideoFileOperationsService.GetAvailableOutputPath(_root, "naming-test", ".mp4");
+        Assert(output == Path.Combine(_root, "naming-test_ReMUX_3.mp4"),
+            "remux output naming did not skip existing files");
+    }
+
+    private static void TestVideoCsvRowFormatting()
+    {
+        var row = new VideoCsvRow(
+            "clip,one.mp4", "1 KB", "Title, \"Quoted\"\r\nLine", "Actor", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
+        var fields = row.ToFields().ToArray();
+        var csv = VideoCsvExportService.FormatRow(fields);
+        Assert(fields.Length == 20 && fields[0] == row.FileName && fields[2] == row.Title,
+            "CSV row field mapping changed");
+        Assert(csv.StartsWith("\"clip,one.mp4\",1 KB,", StringComparison.Ordinal),
+            "CSV row formatting did not quote a comma-containing field");
+        Assert(csv.Contains("\"Title, \"\"Quoted\"\"\r\nLine\"", StringComparison.Ordinal),
+            "CSV export did not escape quotes and line breaks in a field");
     }
 
     private static void TestVerificationPreservesTechnicalInformation()

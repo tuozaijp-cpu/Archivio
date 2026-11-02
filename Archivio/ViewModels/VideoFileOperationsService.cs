@@ -37,15 +37,20 @@ namespace Archivio.ViewModels
     {
         public async Task RenameAsync(StorageFile file, string newName)
         {
-            var originalExtension = Path.GetExtension(file.Name);
-            var requestedExtension = Path.GetExtension(newName);
+            await file.RenameAsync(GetRenameName(file.Name, newName), NameCollisionOption.FailIfExists);
+        }
+
+        internal static string GetRenameName(string currentName, string requestedName)
+        {
+            var originalExtension = Path.GetExtension(currentName);
+            var requestedExtension = Path.GetExtension(requestedName);
             if (string.IsNullOrWhiteSpace(requestedExtension)
                 || !string.Equals(originalExtension, requestedExtension, StringComparison.OrdinalIgnoreCase))
             {
-                newName = Path.GetFileNameWithoutExtension(newName) + originalExtension;
+                return Path.GetFileNameWithoutExtension(requestedName) + originalExtension;
             }
 
-            await file.RenameAsync(newName, NameCollisionOption.FailIfExists);
+            return requestedName;
         }
 
         public async Task DeleteAsync(StorageFile file)
@@ -100,7 +105,7 @@ namespace Archivio.ViewModels
             return await StorageFile.GetFileFromPathAsync(outputPath);
         }
 
-        private static string GetAvailableOutputPath(string directory, string baseName, string extension)
+        internal static string GetAvailableOutputPath(string directory, string baseName, string extension)
         {
             var outputPath = Path.Combine(directory, baseName + "_ReMUX" + extension);
             for (var suffix = 2; File.Exists(outputPath) || Directory.Exists(outputPath); suffix++)

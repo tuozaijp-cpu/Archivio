@@ -79,7 +79,7 @@ namespace Archivio.ViewModels
             };
         }
 
-        private static string FormatRow(IEnumerable<string?> fields)
+        internal static string FormatRow(IEnumerable<string?> fields)
         {
             return string.Join(",", fields.Select(DisplayFormatHelper.EscapeCsvField));
         }
