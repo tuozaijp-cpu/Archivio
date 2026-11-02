@@ -76,7 +76,7 @@ Archivio（アルキーヴィオ）は、動画ファイルを一覧表示し、
 [\credits.cast.0]\work.title[\identifiers.catalog-number]
 ```
 
-`\work.title` のように項目IDの前に `\` を付ける記法、`{work.title}` のように波括弧で囲む記法を利用できます。角括弧などの文字をファイル名に含めることもできます。出演者などの複数値は `.0`、`.1` のように番号を指定できます。標準項目とカスタム項目のIDが使用でき、空の値は空文字として扱います。ファイル名に使用できない文字は `_` に置き換え、元の拡張子を維持します。
+`\work.title` のように項目IDの前に `\` を付ける記法を利用できます。角括弧などの文字をファイル名に含めることもできます。出演者などの複数値は `.0`、`.1` のように番号を指定できます。標準項目とカスタム項目のIDが使用でき、空の値は空文字として扱います。ファイル名に使用できない文字は `_` に置き換え、元の拡張子を維持します。
 
 ### ファイルの削除
 
@@ -145,3 +145,25 @@ FFmpegとFFprobeは任意の外部ツールです。利用するには実行フ�
 FFprobeが見つからない場合は、Windowsのファイルプロパティ取得へフォールバックします。その場合、ストリーム数など一部の技術情報を取得できないことがあります。FFmpegは `settings.json` の `FfprobePath` に指定したFFprobe実行ファイルと同じフォルダー、環境変数 `PATH`、Windowsの `where.exe` を使って検索します。FFmpegが利用できない場合、再MUX、キャプチャ、一覧作成は実行できません。エラーは画面に表示され、詳細はログに記録されます。
 
 設定ファイルは `%LOCALAPPDATA%\Archivio\settings.json` に保存されます。ログは `%LOCALAPPDATA%\Archivio\Archivio.log` に出力されます。
+
+## ファイル名生成で指定できるタグ名一覧
+
+テンプレートには、以下の項目IDを指定できます。IDは大文字・小文字を含めてそのまま入力してください。複数値を持つ項目は `.0`、`.1` のように添字を付けると、個別の値を指定できます。出演者は `credits.cast.0` で人物名を指定でき、`.character` と `.lead` を付けて役名・主演フラグも指定できます。カスタム項目は設定したID（`custom.` で始まるID）を使用します。
+
+| 分類 | タグ名 |
+| --- | --- |
+| ファイル | `file.name`, `file.size` |
+| 作品 | `work.title`, `work.subtitle`, `work.original-title`, `work.alternate-titles`, `work.description`, `work.synopsis`, `work.keywords`, `work.content-type`, `work.category`, `work.comment` |
+| 出演者・スタッフ | `credits.participants`, `credits.cast`, `credits.crew`, `credits.production-companies`, `credits.distributors`, `credits.publishers` |
+| シリーズ | `series.name`, `series.season-number`, `series.episode-number`, `series.episode-title`, `series.episode-id`, `series.season-count`, `series.episode-count`, `series.publication-year`, `series.part-number` |
+| 発行元 | `publication.publisher`, `publication.label` |
+| 日付 | `dates.release`, `dates.recording`, `dates.filming`, `dates.purchased`, `dates.archivio-registered`, `dates.archivio-updated` |
+| 評価 | `evaluation.rating`, `evaluation.content-rating`, `evaluation.personal-notes` |
+| 識別子 | `identifiers.catalog-number`, `identifiers.barcode`, `identifiers.imdb`, `identifiers.tmdb`, `identifiers.tvdb` |
+| 入手情報 | `acquisition.price`, `acquisition.currency`, `acquisition.seller`, `acquisition.url`, `acquisition.source`, `acquisition.original-media` |
+| 権利 | `rights.copyright-holder`, `rights.license`, `rights.source` |
+| 撮影場所 | `location.filming`, `location.country` |
+| 動画技術情報 | `technical.duration`, `technical.frame-width`, `technical.frame-height`, `technical.frame-rate`, `technical.video-bitrate`, `technical.video-codec`, `technical.video-profile`, `technical.video-level`, `technical.video-fourcc`, `technical.total-bitrate`, `technical.video-aspect-ratio`, `technical.video-pixel-aspect-ratio`, `technical.video-rotation`, `technical.video-hdr`, `technical.video-color-space`, `technical.video-color-primaries`, `technical.video-transfer`, `technical.video-matrix`, `technical.video-mastering-display`, `technical.video-maxcll`, `technical.video-maxfall`, `technical.video-stereo-3d`, `technical.video-360`, `technical.video-encoder`, `technical.video-encoding-settings`, `technical.video-stream-count`, `technical.video-track-id`, `technical.video-track-name` |
+| 音声技術情報 | `technical.audio-sample-rate`, `technical.audio-bitrate`, `technical.audio-codec`, `technical.audio-profile`, `technical.audio-channels`, `technical.audio-channel-layout`, `technical.audio-language`, `technical.audio-loudness`, `technical.audio-replaygain`, `technical.audio-ebu-r128`, `technical.audio-true-peak`, `technical.audio-stream-count`, `technical.audio-track-id`, `technical.audio-track-name` |
+
+技術情報やファイル情報は読み取り専用の場合があります。また、値が取得できない項目は空文字として扱われます。カバー画像の `artwork.cover` と `artwork.thumbnail` は画像データを文字列としてファイル名にできないため、テンプレートでは使用できません。
