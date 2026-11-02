@@ -24,6 +24,7 @@ internal static class Program
             Run("custom metadata editor value conversion", TestCustomMetadataEditorValueConversion);
             Run("thumbnail cache capacity and LRU behavior", TestThumbnailCacheCapacityAndLru);
             Run("thumbnail cache overwrite remove clear and retain", TestThumbnailCacheMutation);
+            Run("metadata loading coordinator retries and cancels", TestMetadataLoadCoordinator);
             Run("file save operation state is reference counted", TestFileSaveOperationState);
             Run("FFmpeg playback commands and executable discovery", TestFfmpegMediaService);
             Run("metadata field format capabilities", TestMetadataFieldFormatCapabilities);
@@ -278,6 +279,72 @@ internal static class Program
             LastWriteTime = DateTimeOffset.UnixEpoch,
             ImageData = new byte[dataLength]
         };
+    }
+
+    private static void TestMetadataLoadCoordinator()
+    {
+        using var readSemaphore = new SemaphoreSlim(1, 1);
+        var coordinator = new MetadataLoadCoordinator(readSemaphore, maxAttempts: 3, retryDelay: TimeSpan.Zero);
+        var attempts = 0;
+        var loaded = coordinator.ExecuteAsync(ct => coordinator.LoadWithRetryAsync(_ =>
+        {
+            attempts++;
+            return Task.FromResult(new VideoMetadataLoadResult
+            {
+                WindowsPropertiesLoaded = attempts == 2
+            });
+        }, ct)).GetAwaiter().GetResult();
+
+        Assert(attempts == 2 && loaded.WindowsPropertiesLoaded, "metadata coordinator did not retry until properties loaded");
+
+        attempts = 0;
+        coordinator.ExecuteAsync(ct => coordinator.LoadWithRetryAsync(_ =>
+        {
+            attempts++;
+            return Task.FromResult(new VideoMetadataLoadResult());
+        }, ct)).GetAwaiter().GetResult();
+        Assert(attempts == 3, "metadata coordinator did not stop after the configured attempt count");
+
+        using var cancellation = new CancellationTokenSource();
+        var cancelledAttempts = 0;
+        var cancellationTask = coordinator.ExecuteAsync(ct => coordinator.LoadWithRetryAsync(_ =>
+        {
+            cancelledAttempts++;
+            cancellation.Cancel();
+            return Task.FromResult(new VideoMetadataLoadResult());
+        }, ct), cancellation.Token);
+
+        var wasCancelled = false;
+        try
+        {
+            cancellationTask.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            wasCancelled = true;
+        }
+        Assert(wasCancelled, "metadata coordinator ignored cancellation between attempts");
+        Assert(cancelledAttempts == 1, "metadata coordinator attempted another load after cancellation");
+
+        using var boundedSemaphore = new SemaphoreSlim(2, 2);
+        var boundedCoordinator = new MetadataLoadCoordinator(boundedSemaphore, maxAttempts: 1, retryDelay: TimeSpan.Zero);
+        var activeLoads = 0;
+        var maximumConcurrency = 0;
+        var concurrentLoads = Enumerable.Range(0, 8).Select(_ => boundedCoordinator.ExecuteAsync(async _ =>
+        {
+            var active = Interlocked.Increment(ref activeLoads);
+            int observed;
+            while (active > (observed = Volatile.Read(ref maximumConcurrency))
+                && Interlocked.CompareExchange(ref maximumConcurrency, active, observed) != observed)
+            {
+            }
+
+            await Task.Delay(20);
+            Interlocked.Decrement(ref activeLoads);
+            return true;
+        }));
+        Task.WhenAll(concurrentLoads).GetAwaiter().GetResult();
+        Assert(maximumConcurrency == 2, "metadata coordinator did not enforce the configured shared concurrency limit");
     }
 
     private static void TestFfmpegMediaService()

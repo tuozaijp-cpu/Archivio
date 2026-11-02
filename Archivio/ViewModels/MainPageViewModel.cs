@@ -31,6 +31,7 @@ namespace Archivio.ViewModels
         private CancellationTokenSource? _refreshCts;
         private readonly SemaphoreSlim _metadataReadSemaphore = new(8, 8);
         private readonly SemaphoreSlim _metadataSaveSemaphore = new(1, 1);
+        private readonly MetadataLoadCoordinator _metadataLoadCoordinator;
         private readonly IVideoMetadataService _metadataService;
         private readonly IVideoFileService _fileService;
         private readonly IVideoFileOperationsService _fileOperationsService;
@@ -73,6 +74,7 @@ namespace Archivio.ViewModels
             _fileService = fileService;
             _fileOperationsService = fileOperationsService;
             _csvExportService = csvExportService;
+            _metadataLoadCoordinator = new MetadataLoadCoordinator(_metadataReadSemaphore);
             var settings = SettingsManager.LoadSettings();
             _includeSubfolders = settings.IncludeSubfolders;
             _isThumbnailView = settings.IsThumbnailView;
@@ -1185,7 +1187,7 @@ namespace Archivio.ViewModels
                 cts.Token.ThrowIfCancellationRequested();
 
                 // キャッシュに頼らず直接ファイルから読み込み直すために force: true を指定
-                await LoadWindowsPropertiesAsync(currentVideo, force: true);
+                await LoadWindowsPropertiesAsync(currentVideo, force: true, cancellationToken: cts.Token);
 
                 if (!cts.IsCancellationRequested && SelectedVideo == currentVideo)
                 {
@@ -1258,60 +1260,50 @@ namespace Archivio.ViewModels
 
         private async Task<bool> LoadWindowsPropertiesAsync(VideoFileItem item, bool force = false, CancellationToken cancellationToken = default)
         {
-            await _metadataReadSemaphore.WaitAsync();
             try
             {
-                if (!force && item.IsLoaded)
+                return await _metadataLoadCoordinator.ExecuteAsync(async ct =>
                 {
-                    return true;
-                }
-
-                if (!force && _metadataCache.TryGetValue(item.FullPath, out var cachedMetadata))
-                {
-                    await ApplyMetadataToItemAsync(item, cachedMetadata);
-                    return true;
-                }
-
-                VideoMetadataLoadResult? loadResult = null;
-                for (var attempt = 1; attempt <= 3; attempt++)
-                {
-                    var file = await item.GetFileAsync();
-                    loadResult = await _metadataService.LoadMetadataAsync(file, cancellationToken);
-                    if (loadResult.TechnicalPropertiesLoaded || loadResult.WindowsPropertiesLoaded || attempt == 3)
+                    if (!force && item.IsLoaded)
                     {
-                        break;
+                        return true;
                     }
 
-                    await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt));
-                }
+                    if (!force && _metadataCache.TryGetValue(item.FullPath, out var cachedMetadata))
+                    {
+                        await ApplyMetadataToItemAsync(item, cachedMetadata);
+                        return true;
+                    }
 
-                if (loadResult is null)
-                {
+                    var loadResult = await _metadataLoadCoordinator.LoadWithRetryAsync(async token =>
+                    {
+                        var file = await item.GetFileAsync();
+                        return await _metadataService.LoadMetadataAsync(file, token);
+                    }, ct);
+
+                    await ApplyMetadataToItemAsync(item, loadResult.Metadata);
+
+                    if (loadResult.TechnicalPropertiesLoaded || loadResult.WindowsPropertiesLoaded)
+                    {
+                        _metadataCache[item.FullPath] = loadResult.Metadata;
+                        return true;
+                    }
+
+                    AppLogger.Error(
+                        "Windows プロパティを再試行後も読み込めませんでした",
+                        new InvalidOperationException(string.Join(Environment.NewLine, loadResult.WindowsPropertyErrors)),
+                        item.FullPath);
                     return false;
-                }
-
-                await ApplyMetadataToItemAsync(item, loadResult.Metadata);
-
-                if (loadResult.TechnicalPropertiesLoaded || loadResult.WindowsPropertiesLoaded)
-                {
-                    _metadataCache[item.FullPath] = loadResult.Metadata;
-                    return true;
-                }
-
-                AppLogger.Error(
-                    "Windows プロパティを再試行後も読み込めませんでした",
-                    new InvalidOperationException(string.Join(Environment.NewLine, loadResult.WindowsPropertyErrors)),
-                    item.FullPath);
-                return false;
+                }, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 AppLogger.Error("メタデータの適用に失敗しました", ex, item.FullPath);
                 return false;
-            }
-            finally
-            {
-                _metadataReadSemaphore.Release();
             }
         }
 
