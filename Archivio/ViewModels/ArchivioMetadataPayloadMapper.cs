@@ -61,6 +61,7 @@ namespace Archivio.ViewModels
                 document.PeopleAndStaff = payload.PeopleAndStaff ?? new PeopleAndStaffMetadata();
                 document.Dates = payload.Dates ?? new MetadataDates();
                 document.Identifiers = payload.Identifiers ?? new IdentifierMetadata();
+                document.Series = payload.Series ?? new SeriesMetadata();
                 document.Acquisition = payload.Acquisition ?? new AcquisitionMetadata();
                 document.Rights = payload.Rights ?? new RightsMetadata();
                 document.Location = payload.Location ?? new LocationMetadata();

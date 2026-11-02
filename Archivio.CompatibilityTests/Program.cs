@@ -499,7 +499,11 @@ internal static class Program
         snapshot.StructuredMetadata.Acquisition.Source = "Acquisition source";
         snapshot.StructuredMetadata.CustomFields["custom.test-note"] = new MetadataValue { Kind = MetadataValueKind.Text, Text = "custom value" };
 
-        var save = store.SaveAsync(storageFile, snapshot, before, new[] { "Title", "Comment", "work.subtitle", "acquisition.source", "custom.test-note" }).GetAwaiter().GetResult();
+        var save = store.SaveAsync(storageFile, snapshot, before, new[]
+        {
+            "Title", "Comment", "work.subtitle", "series.name", "series.season-number",
+            "series.episode-number", "acquisition.source", "custom.test-note"
+        }).GetAwaiter().GetResult();
         Assert(save.Succeeded, $"save failed: {save.Details}");
         var after = store.LoadAsync(storageFile).GetAwaiter().GetResult().Metadata;
         Assert(after.Title == snapshot.Title, "standard title was not restored");
@@ -653,7 +657,7 @@ internal static class Program
         var store = new EmbeddedVideoMetadataStore();
         var file = GetStorageFile(path);
         var before = store.LoadAsync(file).GetAwaiter().GetResult().Metadata;
-        var changed = before;
+        var changed = MetadataDocumentMapper.ToSnapshot(MetadataDocumentMapper.FromSnapshot(before));
         changed.Title = "Should not be written";
         var result = store.SaveAsync(file, changed, before, new[] { "Title" }).GetAwaiter().GetResult();
         Assert(result.Succeeded && result.HasWarnings && result.UnsupportedProperties.Contains("work.title"), "unsupported result was not reported");
@@ -862,8 +866,9 @@ internal static class Program
         return copy;
     }
 
-    // テスト用のファイル取得は、WinRTの完了通知を待つため同期結果取得を使います。
-    private static StorageFile GetStorageFile(string path) => StorageFile.GetFileFromPathAsync(path).GetResults();
+    // WinRTの非同期処理を完了させてから同期テストへ戻します。
+    private static StorageFile GetStorageFile(string path) =>
+        Task.Run(async () => await StorageFile.GetFileFromPathAsync(path)).GetAwaiter().GetResult();
 
     private static void RunFfmpeg(params string[] arguments)
     {

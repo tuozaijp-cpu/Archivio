@@ -452,6 +452,16 @@ internal static class MetadataSaveCoordinator
         var plan = MetadataChangePlanner.Create(path, metadata, originalMetadata, changedProperties);
         if (plan.FieldsToPersist.Count == 0)
         {
+            if (plan.UnsupportedFields.Count > 0)
+            {
+                return MetadataSaveResultBuilder.Build(
+                    plan,
+                    Array.Empty<string>(),
+                    Array.Empty<string>(),
+                    null,
+                    succeeded: true);
+            }
+
             return new VideoMetadataOperationResult { Succeeded = true, Message = LanguageManager.GetString("Msg_NoChanges") };
         }
 
