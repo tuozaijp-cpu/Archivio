@@ -21,6 +21,7 @@ internal static class Program
         try
         {
             Run("metadata filename template service", TestMetadataFileNameTemplateService);
+            Run("file save operation state is reference counted", TestFileSaveOperationState);
             Run("metadata field format capabilities", TestMetadataFieldFormatCapabilities);
             Run("create isolated media fixtures", CreateFixtures);
             Run("metadata save verification preserves technical information", TestVerificationPreservesTechnicalInformation);
@@ -126,14 +127,16 @@ internal static class Program
     private static void TestMetadataFileNameTemplateService()
     {
         var item = new VideoFileItem("video.mp4");
-        item.StructuredMetadata.Work.Title = "Title: one";
+        item.Title = "Title:/ one";
+        item.CatalogNumber = "CAT-01";
         item.StructuredMetadata.Work.Subtitle = "Subtitle";
+        item.StructuredMetadata.Work.AlternateTitles = ["Alternate one", "Alternate two"];
         item.StructuredMetadata.PeopleAndStaff.Cast = new()
         {
             new CastCredit { PersonName = "Actor", CharacterName = "Role", IsLead = true, Order = 0 },
             new CastCredit { PersonName = "Second", Order = 1 }
         };
-        item.StructuredMetadata.Dates.ReleaseDate = new DateTimeOffset(2024, 2, 3, 0, 0, 0, TimeSpan.Zero);
+        item.ReleaseDate = new DateTimeOffset(2024, 2, 3, 0, 0, 0, TimeSpan.Zero);
         MetadataFieldCatalog.RefreshCustomFields(new[]
         {
             new CustomMetadataFieldDefinition { Id = "custom.filename-test", DisplayName = "Filename test", ValueType = "Text", Category = "Work", IsEditable = true }
@@ -141,12 +144,35 @@ internal static class Program
         item.StructuredMetadata.CustomFields["custom.filename-test"] = new MetadataValue { Text = "custom value" };
 
         var service = new MetadataFileNameTemplateService();
-        Assert(service.Build(item, @"\work.title").FileName == "Title_ one.mp4", "basic filename value was not sanitized");
+        Assert(service.Build(item, @"\work.title").FileName == "Title__ one.mp4", "basic filename value was not sanitized");
         Assert(service.Build(item, @"[\credits.cast.0][\credits.cast.1]").FileName == "[Actor][Second].mp4", "multiple cast values failed");
-        Assert(service.Build(item, @"{work.subtitle}-[{\credits.cast.0.character}]").FileName == "Subtitle-[Role].mp4", "brace syntax or role failed");
-        Assert(service.Build(item, @"\custom.filename-test-\dates.release").FileName == "custom value-2024-02-03.mp4", "custom/date value failed");
-        Assert(service.Build(item, @"\unknown.id").InvalidIds.Contains("unknown.id"), "unknown ID was not reported");
-        Assert(service.Build(item, @"\タイトル-\品番").FileName == "Title_ one-.mp4", "compatibility aliases failed");
+        Assert(service.Build(item, @"{work.subtitle}-[{\credits.cast.0.character}]").FileName == "Subtitle-[{Role}].mp4", "brace syntax or role failed");
+        Assert(service.Build(item, @"[\work.alternate-titles.1]").FileName == "[Alternate two].mp4", "indexed metadata value failed");
+        Assert(service.Build(item, @"[\custom.filename-test]-\dates.release").FileName == "[custom value]-2024-02-03.mp4", "custom/date value failed");
+        Assert(service.Build(item, @"\credits.cast.0.lead").FileName == "true.mp4", "cast role flag failed");
+        Assert(service.Build(item, @"\出演者0").FileName == "Actor.mp4", "Japanese cast alias failed");
+        var unknownToken = service.Build(item, @"\unknown.id");
+        Assert(!unknownToken.Succeeded && unknownToken.InvalidIds.Contains("unknown.id"), "unknown ID was not rejected and reported");
+        var unknownBraceToken = service.Build(item, "{missing.field}");
+        Assert(!unknownBraceToken.Succeeded && unknownBraceToken.InvalidIds.Contains("missing.field"), "unknown brace token was not rejected and reported");
+        Assert(service.Build(item, @"[\タイトル]-[\品番]").FileName == "[Title__ one]-[CAT-01].mp4", "compatibility aliases failed");
+        Assert(service.Build(item, @"literal{").FileName == "literal{.mp4", "unclosed brace was not preserved as literal text");
+    }
+
+    private static void TestFileSaveOperationState()
+    {
+        var item = new VideoFileItem("video.mp4");
+        Assert(!item.IsFileSaveInProgress, "file save state should start inactive");
+
+        item.BeginFileSaveOperation();
+        item.BeginFileSaveOperation();
+        Assert(item.IsFileSaveInProgress, "file save state was not activated");
+
+        item.EndFileSaveOperation();
+        Assert(item.IsFileSaveInProgress, "file save state ended while another save was active");
+
+        item.EndFileSaveOperation();
+        Assert(!item.IsFileSaveInProgress, "file save state did not return to inactive");
     }
 
     private static void TestContainerRoundTrip(string fixtureName)

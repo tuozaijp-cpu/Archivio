@@ -230,11 +230,13 @@ namespace Archivio.ViewModels
             }
 
             var targetVideo = SelectedVideo;
-            _setBusy(true);
-            _setError(string.Empty, null, null); // Clear message
-            _setSavingStatus(targetVideo, $"{targetVideo.FileName} {LanguageManager.GetString("Status_TagSaving")}");
+            await DispatcherHelper.RunOnUIThreadAsync(targetVideo.BeginFileSaveOperation);
             try
             {
+                _setBusy(true);
+                _setError(string.Empty, null, null); // Clear message
+                _setSavingStatus(targetVideo, $"{targetVideo.FileName} {LanguageManager.GetString("Status_TagSaving")}");
+
                 // キャッシュに頼らず、再度ファイルから直接メタデータを読み込む
                 var targetFile = await targetVideo.GetFileAsync();
                 var loadResult = await _metadataService.LoadMetadataAsync(targetFile);
@@ -308,7 +310,14 @@ namespace Archivio.ViewModels
             }
             finally
             {
-                _setBusy(false);
+                try
+                {
+                    await DispatcherHelper.RunOnUIThreadAsync(targetVideo.EndFileSaveOperation);
+                }
+                finally
+                {
+                    _setBusy(false);
+                }
             }
         }
 
@@ -320,11 +329,13 @@ namespace Archivio.ViewModels
             }
 
             var targetVideo = SelectedVideo;
-            _setBusy(true);
-            _setError(string.Empty, null, null); // Clear message
-            _setSavingStatus(targetVideo, $"{targetVideo.FileName} {LanguageManager.GetString("Status_ImageSaving")}");
+            await DispatcherHelper.RunOnUIThreadAsync(targetVideo.BeginFileSaveOperation);
             try
             {
+                _setBusy(true);
+                _setError(string.Empty, null, null); // Clear message
+                _setSavingStatus(targetVideo, $"{targetVideo.FileName} {LanguageManager.GetString("Status_ImageSaving")}");
+
                 var result = await SaveCoverArtAsync(targetVideo);
 
                 if (result.Succeeded)
@@ -367,7 +378,14 @@ namespace Archivio.ViewModels
             }
             finally
             {
-                _setBusy(false);
+                try
+                {
+                    await DispatcherHelper.RunOnUIThreadAsync(targetVideo.EndFileSaveOperation);
+                }
+                finally
+                {
+                    _setBusy(false);
+                }
             }
         }
 

@@ -19,6 +19,7 @@ namespace Archivio.Models
         private string _originalStructuredMetadataJson = string.Empty;
         private MetadataDocument _originalStructuredMetadata = new();
         private MetadataDocument _structuredMetadata = new();
+        private int _activeFileSaveOperationCount;
 
         /// <summary>動画ファイルから読み込んだArchivio共通メタデータ。既存プロパティとの互換用に併存する。</summary>
         public MetadataDocument StructuredMetadata
@@ -112,6 +113,31 @@ namespace Archivio.Models
         }
 
         public IReadOnlyCollection<string> DirtyCustomMetadataFieldIds => _dirtyCustomMetadataFieldIds;
+
+        public bool IsFileSaveInProgress => Volatile.Read(ref _activeFileSaveOperationCount) > 0;
+
+        public void BeginFileSaveOperation()
+        {
+            if (Interlocked.Increment(ref _activeFileSaveOperationCount) == 1)
+            {
+                OnPropertyChanged(nameof(IsFileSaveInProgress));
+            }
+        }
+
+        public void EndFileSaveOperation()
+        {
+            var remainingOperations = Interlocked.Decrement(ref _activeFileSaveOperationCount);
+            if (remainingOperations < 0)
+            {
+                Interlocked.Exchange(ref _activeFileSaveOperationCount, 0);
+                throw new InvalidOperationException("No file save operation is in progress.");
+            }
+
+            if (remainingOperations == 0)
+            {
+                OnPropertyChanged(nameof(IsFileSaveInProgress));
+            }
+        }
 
         public void MarkCustomMetadataFieldChanged(string fieldId)
         {

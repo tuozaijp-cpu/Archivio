@@ -1593,6 +1593,11 @@ namespace Archivio.Views
 
         private async void CaptureFrameButton_ClickCore(object sender, RoutedEventArgs e)
         {
+            if (!ViewModel.CanStartVideoFileActions)
+            {
+                return;
+            }
+
             if (!_isPlaybackView || _videoPlayerElement?.Source is null || _playbackPlayer is null
                 || ViewModel.SelectedVideo is null)
             {
@@ -1670,7 +1675,7 @@ namespace Archivio.Views
 
         private async void CreateThumbnailSheetButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (_isThumbnailSheetGenerating || ViewModel.SelectedVideo is null)
+            if (_isThumbnailSheetGenerating || !ViewModel.CanStartVideoFileActions || ViewModel.SelectedVideo is null)
             {
                 return;
             }
@@ -1941,11 +1946,20 @@ namespace Archivio.Views
                 VideoPlaybackToggleButton.IsChecked = false;
                 await UpdatePlaybackSourceAsync();
             }
+            else if (e.PropertyName == nameof(MainPageViewModel.CanStartVideoFileActions))
+            {
+                UpdateActionButtonStates();
+                if (!ViewModel.CanStartVideoFileActions)
+                {
+                    _playbackPlayer?.Pause();
+                }
+            }
         }
 
         private void UpdateCaptureFrameButtonState()
         {
-            CaptureFrameButton.IsEnabled = _isPlaybackView
+            CaptureFrameButton.IsEnabled = ViewModel.CanStartVideoFileActions
+                && _isPlaybackView
                 && _videoPlayerElement?.Source is not null
                 && _playbackPlayer is not null
                 && ViewModel.IsVideoSelected;
@@ -1954,7 +1968,7 @@ namespace Archivio.Views
         private void UpdateActionButtonStates()
         {
             UpdateCaptureFrameButtonState();
-            CreateThumbnailSheetButton.IsEnabled = ViewModel.IsVideoSelected
+            CreateThumbnailSheetButton.IsEnabled = ViewModel.CanStartVideoFileActions
                 && _ffmpegPath is not null
                 && !_isThumbnailSheetGenerating;
             ThumbnailSheetProgressRing.IsActive = _isThumbnailSheetGenerating;
@@ -1981,6 +1995,12 @@ namespace Archivio.Views
 
         private async void VideoPlaybackToggleButton_ClickCore(object sender, RoutedEventArgs e)
         {
+            if (!ViewModel.CanStartVideoFileActions)
+            {
+                VideoPlaybackToggleButton.IsChecked = false;
+                return;
+            }
+
             _isPlaybackView = true;
             CoverArtViewToggleButton.IsChecked = false;
             VideoPlaybackToggleButton.IsChecked = true;
@@ -2534,318 +2554,6 @@ namespace Archivio.Views
             {
                 await ViewModel.RenameVideoAsync(selectedVideo, newName);
             }
-        }
-
-        private static bool TryBuildMetadataFileName(
-            VideoFileItem video,
-            string template,
-            out string fileName,
-            out List<string> invalidIds)
-        {
-            fileName = string.Empty;
-            invalidIds = new List<string>();
-            if (string.IsNullOrWhiteSpace(template))
-            {
-                return false;
-            }
-
-            var result = new System.Text.StringBuilder();
-            for (var index = 0; index < template.Length;)
-            {
-                if (template[index] == '\\')
-                {
-                    var end = index + 1;
-                    while (end < template.Length && template[end] is not ('[' or ']' or '{' or '}' or '\\')) end++;
-                    AppendTokenValue(video, invalidIds, result, template[(index + 1)..end]);
-                    index = end;
-                    continue;
-                }
-
-                if (template[index] == '{')
-                {
-                    var close = template.IndexOf('}', index + 1);
-                    if (close < 0)
-                    {
-                        result.Append(template[index..]);
-                        break;
-                    }
-
-                    var token = template[(index + 1)..close].Trim();
-                    var preserveBraces = token.StartsWith('\\');
-                    if (preserveBraces) token = token[1..];
-                    if (TryResolveMetadataToken(video, token, out _))
-                    {
-                        if (preserveBraces) result.Append('{');
-                        AppendTokenValue(video, invalidIds, result, token);
-                        if (preserveBraces) result.Append('}');
-                    }
-                    else
-                    {
-                        result.Append(template[index..(close + 1)]);
-                        if (!string.IsNullOrWhiteSpace(token)) invalidIds.Add(token);
-                    }
-
-                    index = close + 1;
-                    continue;
-                }
-
-                // 角括弧などの記号は通常文字として扱う。例えば
-                // [\出演者0]\タイトル[\品番] は角括弧を残して展開する。
-                result.Append(template[index]);
-                index++;
-            }
-
-            var invalidFileNameChars = System.IO.Path.GetInvalidFileNameChars();
-            fileName = new string(result.ToString()
-                .Select(character => invalidFileNameChars.Contains(character) ? '_' : character)
-                .ToArray()).Trim().TrimEnd('.', ' ');
-            if (string.IsNullOrWhiteSpace(fileName) || fileName is "." or ".." || invalidIds.Count > 0)
-            {
-                return false;
-            }
-
-            fileName += System.IO.Path.GetExtension(video.FileName);
-            return true;
-        }
-
-        private static void AppendTokenValue(
-            VideoFileItem video,
-            ICollection<string> invalidIds,
-            System.Text.StringBuilder result,
-            string id)
-        {
-            if (TryResolveMetadataToken(video, id, out var value))
-            {
-                result.Append(value);
-            }
-            else
-            {
-                invalidIds.Add(id);
-            }
-        }
-
-        /// <summary>
-        /// ファイル名テンプレートのIDを、表示名ではなくメタデータカタログの安定IDから解決する。
-        /// 例: work.subtitle、work.alternate-titles.0、credits.cast.0、custom.my-field。
-        /// </summary>
-        private static bool TryResolveMetadataToken(VideoFileItem video, string token, out string value)
-        {
-            value = string.Empty;
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                return false;
-            }
-
-            var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["出演者0"] = "credits.cast.0",
-                ["タイトル"] = "work.title",
-                ["品番"] = "identifiers.catalog-number"
-            };
-            token = aliases.TryGetValue(token.Trim(), out var alias) ? alias : token.Trim();
-
-            // 出演者は人物名・役名・主演をテンプレートから個別に指定できる。
-            if (TryParseCastToken(token, out var castIndex, out var castPart))
-            {
-                var cast = video.StructuredMetadata.PeopleAndStaff.Cast
-                    .OrderBy(credit => credit.Order)
-                    .ToList();
-                if (castIndex < 0 || castIndex >= cast.Count)
-                {
-                    value = string.Empty;
-                    return MetadataFieldCatalog.FindById("credits.cast") is not null;
-                }
-
-                var credit = cast[castIndex];
-                value = castPart switch
-                {
-                    "character" or "role" => credit.CharacterName,
-                    "lead" => credit.IsLead ? "true" : "false",
-                    _ => credit.PersonName
-                };
-                return true;
-            }
-
-            var definition = MetadataFieldCatalog.FindById(token);
-            var indexed = false;
-            var index = -1;
-            var baseToken = token;
-            if (definition is null)
-            {
-                var separator = token.LastIndexOf('.');
-                if (separator > 0 && int.TryParse(token[(separator + 1)..], out index))
-                {
-                    baseToken = token[..separator];
-                    definition = MetadataFieldCatalog.FindById(baseToken);
-                    indexed = definition is not null;
-                }
-            }
-
-            if (definition is null)
-            {
-                return false;
-            }
-
-            if (definition.IsCustom)
-            {
-                if (video.StructuredMetadata.CustomFields.TryGetValue(
-                        definition.CustomFieldId ?? definition.Id, out var customValue))
-                {
-                    value = FormatMetadataValue(customValue);
-                }
-                return true;
-            }
-
-            // 画像バイナリや表示専用項目は、ファイル名に埋め込める文字値を持たない。
-            var path = definition.DetailsBindingPath ?? definition.ListBindingPath;
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return true;
-            }
-
-            if (!TryReadPropertyPath(video, path, out var rawValue))
-            {
-                return true;
-            }
-
-            if (indexed)
-            {
-                rawValue = GetIndexedValue(rawValue, index);
-            }
-
-            value = FormatMetadataValue(rawValue);
-            return true;
-        }
-
-        private static bool TryParseCastToken(string token, out int index, out string part)
-        {
-            index = -1;
-            part = string.Empty;
-            const string prefix = "credits.cast.";
-            if (!token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            var remainder = token[prefix.Length..];
-            var parts = remainder.Split('.', 2);
-            if (!int.TryParse(parts[0], out index))
-            {
-                return false;
-            }
-
-            part = parts.Length == 2 ? parts[1].ToLowerInvariant() : "person";
-            return true;
-        }
-
-        private static bool TryReadPropertyPath(object source, string path, out object? value)
-        {
-            value = source;
-            foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (value is null)
-                {
-                    return false;
-                }
-
-                var property = value.GetType().GetProperty(
-                    segment,
-                    System.Reflection.BindingFlags.Instance
-                    | System.Reflection.BindingFlags.Public
-                    | System.Reflection.BindingFlags.IgnoreCase);
-                if (property is null)
-                {
-                    value = null;
-                    return false;
-                }
-
-                value = property.GetValue(value);
-            }
-
-            return true;
-        }
-
-        private static object? GetIndexedValue(object? value, int index)
-        {
-            if (index < 0)
-            {
-                return null;
-            }
-
-            if (value is System.Collections.IList list)
-            {
-                return index >= 0 && index < list.Count ? list[index] : null;
-            }
-
-            if (value is IEnumerable<string> strings)
-            {
-                return strings.Skip(index).FirstOrDefault();
-            }
-
-            if (value is string text)
-            {
-                return text.Split(new[] { ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(item => item.Trim())
-                    .Skip(index)
-                    .FirstOrDefault();
-            }
-
-            return null;
-        }
-
-        private static string FormatMetadataValue(object? value)
-        {
-            if (value is null)
-            {
-                return string.Empty;
-            }
-
-            if (value is MetadataValue metadataValue)
-            {
-                return metadataValue.Kind switch
-                {
-                    MetadataValueKind.Date => metadataValue.Date?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                    MetadataValueKind.Integer => metadataValue.Integer?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                    MetadataValueKind.Decimal => metadataValue.Decimal?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                    MetadataValueKind.Rating => metadataValue.Rating?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                    MetadataValueKind.Boolean => metadataValue.Boolean?.ToString().ToLowerInvariant() ?? string.Empty,
-                    MetadataValueKind.MultipleText => string.Join("; ", metadataValue.TextValues),
-                    MetadataValueKind.Image or MetadataValueKind.ImageCollection => string.Empty,
-                    _ => string.IsNullOrWhiteSpace(metadataValue.Text)
-                        ? string.Join("; ", metadataValue.TextValues)
-                        : metadataValue.Text
-                };
-            }
-
-            if (value is DateTimeOffset dateTimeOffset)
-            {
-                return dateTimeOffset.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-            }
-
-            if (value is DateTime dateTime)
-            {
-                return dateTime.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-            }
-
-            if (value is TimeSpan duration)
-            {
-                return duration.ToString("c", System.Globalization.CultureInfo.InvariantCulture);
-            }
-
-            if (value is string textValue)
-            {
-                return textValue;
-            }
-
-            if (value is System.Collections.IEnumerable enumerable)
-            {
-                return string.Join("; ", enumerable.Cast<object?>().Select(FormatMetadataValue)
-                    .Where(item => !string.IsNullOrWhiteSpace(item)));
-            }
-
-            return value is IFormattable formattable
-                ? formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty
-                : value.ToString() ?? string.Empty;
         }
 
         private async void DeleteMenuItem_Click(object sender, RoutedEventArgs e)

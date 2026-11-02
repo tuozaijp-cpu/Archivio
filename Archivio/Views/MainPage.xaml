@@ -325,6 +325,7 @@
                             x:Name="VideoPlaybackToggleButton"
                             Content=""
                             IsChecked="False"
+                            IsEnabled="{x:Bind ViewModel.CanStartVideoFileActions, Mode=OneWay}"
                             Click="VideoPlaybackToggleButton_Click" />
                         <ToggleButton
                             x:Name="CoverArtViewToggleButton"

@@ -269,6 +269,7 @@ namespace Archivio.ViewModels
 
                     OnPropertyChanged(nameof(HasPendingChanges));
                     OnPropertyChanged(nameof(IsVideoSelected));
+                    OnPropertyChanged(nameof(CanStartVideoFileActions));
                     OnPropertyChanged(nameof(DetailedPanelVisibility));
                     _ = LoadSelectedVideoAsync();
                 }
@@ -344,6 +345,8 @@ namespace Archivio.ViewModels
         public bool HasPendingChanges => SelectedVideo?.HasPendingChanges ?? false;
 
         public bool IsVideoSelected => SelectedVideo is not null && !SelectedVideo.IsDeleted;
+
+        public bool CanStartVideoFileActions => IsVideoSelected && SelectedVideo?.IsFileSaveInProgress != true;
 
         public Visibility DetailedPanelVisibility => IsVideoSelected ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1703,6 +1706,10 @@ namespace Archivio.ViewModels
             if (e.PropertyName == nameof(VideoFileItem.HasPendingChanges))
             {
                 OnPropertyChanged(nameof(HasPendingChanges));
+            }
+            else if (e.PropertyName == nameof(VideoFileItem.IsFileSaveInProgress))
+            {
+                OnPropertyChanged(nameof(CanStartVideoFileActions));
             }
         }
 
