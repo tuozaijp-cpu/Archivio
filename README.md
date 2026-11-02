@@ -1,270 +1,147 @@
 # Archivio
 
-An elegant Windows WinUI 3 desktop application for listing video files, managing embedded video metadata, and editing cover art.
+Archivio（アルキーヴィオ）は、動画ファイルを一覧表示し、埋め込みタグ、カバー画像、動画の技術情報を管理するWindowsデスクトップアプリケーションです。動画ファイルをメタデータの保存先として扱い、一覧や詳細画面から動画を検索・再生できます。
 
-動画ファイルを一覧表示し、動画ファイル内のタグを正本としてメタデータやカバーアートを管理するWinUI 3デスクトップアプリケーションです。
+バージョン: **1.4.1**
 
----
+## 動作環境とインストール
 
-## Language / 言語
-* [English (#english)](#english)
-* [日本語 (#日本語)](#日本語)
+- Windows 10（バージョン1809、ビルド17763以降）またはWindows 11
+- .NET 10 Desktop Runtime（x64）
+- FFmpeg／FFprobeは任意です。再MUX、フレームキャプチャ、一覧作成、および詳細な技術情報の取得に使用します。
 
----
+セットアッププログラムを実行し、画面の案内に従ってインストールしてください。起動時にフォルダーのパスを引数として渡すと、そのフォルダーを開きます。
 
-<a name="english"></a>
-# English
+## 画面上部の機能
 
-Archivio is a Windows video metadata manager built with WinUI 3 (Windows App SDK) and .NET 10. It reads and writes editable metadata through embedded video tags using TagLib. Windows APIs and FFprobe provide technical media properties; the video file is the source of truth.
+### フォルダー選択
 
-## Features
-* **Dynamic Grid View:** An interactive `DataGrid` listing video files, with support for column resizing, sorting, and user-led column reordering (drag-and-drop) which persists automatically across application restarts.
-* **Three-Column Detail Panel:**
-  * **Left:** Cover art `FlipView` gallery with tools to add, replace, delete, save, capture a playback frame, and create a 5x5 thumbnail sheet.
-  * **Center:** Editable metadata fields saved to embedded file tags. The tag panel can be displayed in one or two columns, and its save button remains fixed above the fields.
-  * **Right:** Read-only technical metadata panel (Duration, Resolution, Frame Rate, Video/Audio Bitrates, Compression formats, etc.).
-* **Video Playback Keyboard Controls:** When playback is active, Left/Right seek by five seconds, Up/Down change volume by five percent, and Space toggles play/pause.
-* **Metadata Filename Templates:** Generate a filename from the selected video's embedded metadata from the file-list context menu. The original extension is preserved and invalid Windows filename characters are replaced with `_`.
-* **Dynamic JSON Localization:** Fully localized in English and Japanese. Includes an in-place language switcher inside the DataGrid context menu that re-localizes the entire UI instantly without requiring an app restart.
-* **Persistent Layouts:** Automatically saves and restores window dimensions, grid splitter positions, column widths, and custom column display indices.
-* **Thread-Safe Settings:** Fully synchronized settings file I/O protecting against race conditions and concurrent read/write errors.
+「フォルダー選択」から動画が入ったフォルダーを選びます。「サブフォルダーも検索」を有効にすると、下位フォルダーも検索対象になります。起動時にフォルダーのパスを指定して開くこともできます。
 
-### Metadata Filename Templates
+### 再読み込み
 
-Right-click a file in the video list and choose **Generate filename from tags**. The template is saved in the application settings and reused on subsequent operations. The default template is:
+現在のフォルダーを再走査し、ファイルの追加・削除・移動などを一覧に反映します。メタデータやサムネイルも必要に応じて読み直します。
 
-```text
-[\credits.cast.0]\work.title[\identifiers.catalog-number]
-```
+### 検索ウィンドウ
 
-For a first cast member of `Taro Yamada`, a title of `Northern Country`, and catalog number `MMA-001`, the result is:
+上部の検索欄に文字を入力すると、一覧をその場で絞り込みます。列見出しのフィルターボタンから、その列に含まれる値を選択して絞り込むこともできます。列見出しを押すと並べ替えます。
 
-```text
-[Taro Yamada]Northern Country[MMA-001].mp4
-```
+### CSV保存
 
-Filename templates support all stable IDs registered in `MetadataFieldCatalog`, including work, cast/staff, series, dates, evaluation, identifiers, acquisition, rights, location, video/audio technical information, and custom fields (`custom.*`). Multiple values can be indexed with `.0`, `.1`, and so on. The complete current ID list is maintained in the Japanese section below; it is generated from the same catalog used by the application.
+一覧に表示されている動画のファイル名、ファイルサイズ、タグ情報、技術情報などをCSV形式で保存します。検索や列フィルターで絞り込んだ場合は、現在の一覧内容が出力対象です。
 
-Cast-specific forms include `credits.cast.0` (person name), `credits.cast.0.character` (role name), and `credits.cast.0.lead` (lead flag).
+### 表示項目
 
-Template syntax:
+「表示項目」から動画一覧に表示する列を選択できます。列の幅や順序は一覧上で変更できます。列の表示状態、順序、幅は設定に保存されます。
 
-* `\work.title`: the backslash marks the following text as an ID; the backslash itself is not output.
-* `[\credits.cast.0]`: square brackets are ordinary literal characters and the escaped ID inside them is replaced.
-* `{work.title}`: shorthand ID syntax; the ID is replaced and the curly braces are not output.
-* `{\work.title}`: curly braces are kept as literal characters and the escaped ID inside them is replaced.
+### 詳細項目
 
-The compatibility aliases `出演者0`, `タイトル`, and `品番` are also accepted. The default template uses stable IDs so it is not tied to display names.
+「詳細項目」から詳細画面に表示するメタデータ項目を選択し、表示順を変更できます。項目の表示・順序設定は保存されます。
 
----
+### カスタム項目
 
-## FFmpeg & FFprobe Integration & Handling
+「カスタム項目」からユーザー独自のメタデータ項目を定義します。項目の表示名、種類、分類、一覧・詳細画面への表示などを設定できます。値は対象動画のタグに保存されます。コンテナ形式によって保存できる項目は異なります。
 
-Archivio utilizes the official **FFmpeg** and **FFprobe** command-line utilities to perform technical analysis and file operations. They are usually distributed together (e.g. from static builds of FFmpeg). Adding FFmpeg's bin folder to the system's `PATH` environment variable immediately enables both features in Archivio.
+### 高速直接保存
 
-### 1. FFprobe: Technical Property Extraction
-FFprobe is prioritized to extract high-precision technical properties (such as compression codec, audio stream format, accurate bitrates, dimensions, etc.) from video files.
-* **When FFprobe is Present:** Archivio launches the utility in the background, parses its JSON output, and populates the technical fields with detailed stream information.
-* **When FFprobe is Absent (Graceful Fallback):** 
-  * If FFprobe is not found in the `PATH` or configured path, **Archivio gracefully falls back to using the native Windows Shell API**.
-  * It retrieves standard Windows file properties (such as frame size and duration) so the user still sees key details.
-  * It caches the missing status of FFprobe (`_ffprobeAvailability = -1`) to avoid spawning redundant failing processes, ensuring smooth performance.
-  * *Tip:* Users can specify a custom path to the FFprobe executable in the `FfprobePath` field inside `settings.json` (located in `AppData/Local/Archivio`).
+「高速直接保存」を有効にすると、タグや画像を保存するときに元動画の一時コピーを作らず、ファイルへ直接書き込みます。無効の場合は作業用コピーを使って保存後に置き換えます。直接保存を初めて有効にするときは確認が表示されます。直接保存は処理を速くできますが、保存中の障害に備えて、重要な動画は事前にバックアップしてください。
 
-### 3. FFmpeg: Captures and Thumbnail Sheets
-* A single frame can be captured from the current playback position through FFmpeg.
-* A thumbnail sheet is generated by seeking to 25 evenly spaced positions and combining the frames into a 5x5 image. FFmpeg is detected from the configured FFprobe directory, the current `PATH`, or `where.exe`.
+### 中止ボタン
 
-### 2. FFmpeg: Container Re-muxing
-FFmpeg is used for the **"Re-mux with FFmpeg"** feature available in the context menu of the video list, which quickly re-muxes files into standard streamable containers with the `-movflags +faststart` flag (optimizing them for instant web playback).
-* **When FFmpeg is Present:** Re-muxing runs in the background without modifying the source. The output is inserted next to the original, then analyzed and cached. If an output name already exists, a numbered name is used; existing files are not overwritten.
-* **When FFmpeg is Absent:**
-  * **No Crashes:** The application will **never** crash or freeze.
-  * **Graceful Handling:** Archivio intercepts the missing executable exception (`Win32Exception`) gracefully.
-  * **User Guidance:** It displays a clear, friendly, and fully localized error message in the status bar:
-    * *English:* `"FFmpeg is not installed on the system, or not registered in the PATH environment variable."`
-    * *Japanese:* `"ffmpegがシステムにインストールされていないか、環境変数 PATH に登録されていません。"`
-  * **Safe State:** It resets the busy indicators safely and logs the diagnostic error under `C:\Users\<User>\AppData\Local\Archivio\Archivio.log`.
+一覧の読み込み中に押すと、現在のフォルダー再読み込みをキャンセルします。キャンセル後は中止したことをメッセージ領域に表示します。
 
----
+### 詳細／タイル切り替え
 
-## System Requirements
-* **Operating System:** Windows 10 (version 1809, build 17763 or later) or Windows 11
-* **Runtime:** .NET 10.0 Desktop Runtime (x64)
-* **External Tool (Optional):** FFmpeg/FFprobe (Required for Re-muxing and precision metadata extraction)
+「詳細」表示では列形式の一覧を表示します。「タイル」表示ではサムネイル、タイトル、出演者をカード形式で表示します。
 
-## Dynamic Translation Support
-Archivio supports easy community-led translation additions. You can add a new language simply by:
-1. Navigating to the `Assets/Locale/` folder in the installation directory.
-2. Dropping a new `[language_code].json` file (e.g. `fr.json` for French).
-3. Defining `"LanguageName": "Français"` inside the JSON, along with your translations.
-The language will automatically appear in the right-click "Language / 表示言語" menu on next launch!
+### タイルサイズ変更
 
----
+タイル表示の画像とカードの大きさを4段階で変更します。詳細表示中はタイルサイズの変更は一覧に適用されません。
 
-<a name="日本語"></a>
-# 日本語
+### ファイル一覧表示
 
-Archivio（アルキーヴィオ）は、WinUI 3 (Windows App SDK) と .NET 10 を採用した Windows 用の動画メタデータ管理ツールです。
-動画ファイル内のタグ（タイトル、出演者、発売日、評価など）をTagLib経由で読み書きします。動画ファイルを正本とし、Windows APIとFFprobeは技術情報の取得に利用します。
+対応する動画ファイルを一覧またはタイルで表示します。対応拡張子は `.mp4`、`.m4v`、`.mov`、`.mkv`、`.avi`、`.wmv`、`.webm`、`.mpeg`、`.mpg`、`.ts`、`.m2ts`、`.mts`、`.3gp`、`.3g2`、`.flv`、`.ogv`、`.vob`、`.asf` です。項目を選択すると詳細画面に情報を表示します。ダブルクリックすると関連付けられたアプリで動画を開きます。
 
-## はじめに
+## ファイル一覧の右クリックメニュー
 
-Archivioは、動画ファイルを一覧で確認し、動画に埋め込まれたメタデータやカバーアートを整理するための無料アプリです。
-動画ファイルそのものを管理対象とするため、別のデータベースを用意せずに、ファイルと一緒にメタデータを持ち運べます。
+### ファイル名変更
 
-### インストール
+動画を右クリックして「ファイル名変更」を選択し、新しい名前を入力します。元の拡張子と異なる拡張子が入力された場合も、元の拡張子を維持します。
 
-1. `Archivio_Setup.exe`を実行します。
-2. 画面の案内に従ってインストールします。
-3. スタートメニューまたはデスクトップのArchivioから起動します。
+### タグからファイル名を生成
 
-Archivioの実行には **.NET 10.0 Desktop Runtime（x64）** が必要です。インストールされていない場合は、Microsoftの公式ページから.NET Desktop Runtimeをインストールしてください。
-
-### 基本的な使い方
-
-1. 「フォルダを選択」を押し、動画ファイルが入っているフォルダを選択します。
-2. 必要に応じて「サブフォルダーも検索」を有効にして、下位フォルダーも検索します。
-3. 動画一覧からファイルを選択すると、メタデータ、カバーアート、技術情報が表示されます。
-4. 中央のタグ情報欄を編集し、タグ情報欄上部の「タグ保存」を押すと動画ファイルへ書き込みます。タグ情報欄は1列／2列を切り替えられます。
-5. 一覧の右クリックメニューから、ファイル名の変更、再読み込み、再MUX、READMEの表示などを実行できます。
-
-再生画面では、キーボードの左右矢印で5秒シーク、上下矢印で音量を5%変更、スペースキーで再生／一時停止を切り替えられます。
-
-### 大切な注意事項
-
-メタデータの保存やファイル名の変更を行う前に、必要な動画ファイルのバックアップを作成してください。
-特に、独自項目（評価・発売日）はMP4/MKV/WebM以外の形式には埋め込み保存できず、カバーアートも動画形式によって保存できない場合があります。
-保存後は、対象ファイルを再度読み込んで変更内容を確認してください。
-
-.mp4,.mkvでもメタデータの保存に失敗した場合、FFmpegでの再MUXを試してみてください。
-動画本体の情報はそのままメタデータ領域を再構成して保存可能となる可能性があります。
-
-### FFmpegについて
-
-動画の技術情報をより正確に取得したり、再MUX機能を使用したりするにはFFmpegとFFprobeが必要です。
-FFmpegの`bin`フォルダーを環境変数`PATH`へ追加すると、Archivioから自動的に利用できます。
-未設定の場合も、Windowsが提供する基本的なファイル情報を使って動作します。
-
-### READMEの表示
-
-インストール後は、動画一覧を右クリックして「READMEを表示」を選択すると、この利用案内を既定のMarkdown対応アプリまたは関連付けられたアプリで開けます。
-
-Archivioは無料で利用できます。もしArchivioがお役に立ちましたら、今後の開発を応援していただけると嬉しいです。
-
-応援はこちら: <https://ofuse.me/8679942e>
-
-## 主な機能
-* **動的グリッドビュー:** 動画ファイル一覧を表示するインタラクティブな `DataGrid`。カラムの並び替え（ドラッグ＆ドロップ）、リサイズ、ソートに対応し、その順序や幅はアプリ再起動後も自動で復元されます。
-* **高密度3カラム詳細パネル:**
-  * **左カラム:** カバーアート（表紙）の `FlipView` ギャラリー。画像の追加・変更・削除・保存、再生位置の1枚キャプチャ、5×5サムネイル一覧作成に対応。
-  * **中央カラム:** 動画ファイル内タグへ保存するメタデータ入力（タイトル、出演者、発売日、品番、評価、レーベル、発行元、カテゴリ、コメント）。1列／2列表示を選択できます。
-  * **右カラム:** 読み取り専用の技術プロパティ表示（再生時間、解像度、フレームレート、映像/音声ビットレート、圧縮形式など）。
-* **動画再生キーボード操作:** 再生中は左右矢印で5秒シーク、上下矢印で音量を5%変更、スペースキーで再生／一時停止を切り替えます。
-* **タグ情報からのファイル名生成:** 動画一覧の右クリックメニューから、埋め込みタグを使ったファイル名を生成できます。元の拡張子は維持され、Windowsで使用できない文字は `_` に置換されます。
-* **動的 JSON ローカライズ:** 日本語と英語に完全対応。右クリックのコンテキストメニューからアプリを再起動することなく、UI表示言語をその場で一瞬で切り替えられます。
-* **レイアウト設定の自動保存:** ウィンドウサイズ、分割バー位置、各カラム幅、カラムの表示順序を終了時に自動保存し、次回起動時に再現します。
-* **スレッドセーフな設定管理:** 並列バックグラウンド処理でのファイル書き込み競合を防止する静的ロック（FileLock）を搭載した安全な設計。
-
-### タグ情報からファイル名を生成するテンプレート
-
-ファイル一覧で対象ファイルを右クリックし、「タグからファイル名を生成」を選択します。テンプレートは設定ファイルに保存され、次回以降も利用できます。既定値は次のとおりです。
+「タグからファイル名を生成」では、テンプレートにメタデータを埋め込んだファイル名をプレビューしてから適用できます。テンプレートは設定に保存されます。既定のテンプレートは次のとおりです。
 
 ```text
 [\credits.cast.0]\work.title[\identifiers.catalog-number]
 ```
 
-出演者が「山田太郎」、タイトルが「北の国から」、品番が「MMA-001」の場合、次のようになります。
+`\work.title` のように項目IDの前に `\` を付ける記法、`{work.title}` のように波括弧で囲む記法を利用できます。角括弧などの文字をファイル名に含めることもできます。出演者などの複数値は `.0`、`.1` のように番号を指定できます。標準項目とカスタム項目のIDが使用でき、空の値は空文字として扱います。ファイル名に使用できない文字は `_` に置き換え、元の拡張子を維持します。
 
-```text
-[山田太郎]北の国から[MMA-001].mp4
-```
+### ファイルの削除
 
-ファイル名生成は、`MetadataFieldCatalog` に定義された安定IDを基本的にすべて使用できます。複数値は `.0`、`.1` のように添字を付けて指定できます。出演者は `credits.cast.0`（人物名）、`credits.cast.0.character`（役名）、`credits.cast.0.lead`（主演フラグ）も指定できます。カスタム項目は設定で定義した `custom.` から始まるIDを使用します。
+「削除」を選ぶと確認ダイアログが表示されます。確定すると動画ファイルを削除し、一覧と関連キャッシュから取り除きます。削除したファイルは元に戻せないため、実行前に確認してください。
 
-以下は現在の標準カタログに登録され、ファイル名生成で指定できるIDの一覧です。項目追加時はカタログの安定IDも利用対象になります。
+### FFmpegで再MUX
 
-標準項目IDは次のとおりです。
+「再MUX」は動画・音声ストリームを再エンコードせず、コンテナを作り直した動画ファイルを元ファイルと同じフォルダーに作成します。元ファイルは削除・変更しません。出力先に同名ファイルがある場合は連番のファイル名を使用し、既存ファイルを上書きしません。出力ファイルは作成後に一覧へ追加され、メタデータはバックグラウンドで読み込まれます。
 
-| 分類 | 項目ID |
-| --- | --- |
-| ファイル・基本情報 | `file.status`, `file.name`, `file.size`, `work.title`, `credits.participants`, `dates.release`, `identifiers.catalog-number`, `evaluation.rating`, `publication.publisher`, `publication.label`, `work.category`, `work.comment` |
-| 作品 | `work.subtitle`, `work.original-title`, `work.alternate-titles`, `work.description`, `work.synopsis`, `work.keywords`, `work.content-type` |
-| 人物・スタッフ | `credits.cast`, `credits.crew`, `credits.production-companies`, `credits.distributors`, `credits.publishers` |
-| シリーズ | `series.name`, `series.season-number`, `series.episode-number`, `series.episode-title`, `series.episode-id`, `series.season-count`, `series.episode-count`, `series.publication-year`, `series.part-number` |
-| 日付・評価 | `dates.recording`, `dates.filming`, `dates.purchased`, `dates.archivio-registered`, `dates.archivio-updated`, `evaluation.content-rating`, `evaluation.personal-notes` |
-| 識別・入手 | `identifiers.barcode`, `identifiers.imdb`, `identifiers.tmdb`, `identifiers.tvdb`, `acquisition.price`, `acquisition.currency`, `acquisition.seller`, `acquisition.url`, `acquisition.source`, `acquisition.original-media` |
-| 権利・場所 | `rights.copyright-holder`, `rights.license`, `rights.source`, `location.filming`, `location.country` |
-| 動画技術 | `technical.duration`, `technical.frame-width`, `technical.frame-height`, `technical.frame-rate`, `technical.video-bitrate`, `technical.video-codec`, `technical.video-profile`, `technical.video-level`, `technical.video-fourcc`, `technical.total-bitrate`, `technical.video-aspect-ratio`, `technical.video-pixel-aspect-ratio`, `technical.video-rotation`, `technical.video-hdr`, `technical.video-color-space`, `technical.video-color-primaries`, `technical.video-transfer`, `technical.video-matrix`, `technical.video-mastering-display`, `technical.video-maxcll`, `technical.video-maxfall`, `technical.video-stereo-3d`, `technical.video-360`, `technical.video-encoder`, `technical.video-encoding-settings`, `technical.video-stream-count`, `technical.video-track-id`, `technical.video-track-name` |
-| 音声技術 | `technical.audio-sample-rate`, `technical.audio-bitrate`, `technical.audio-codec`, `technical.audio-profile`, `technical.audio-channels`, `technical.audio-channel-layout`, `technical.audio-language`, `technical.audio-loudness`, `technical.audio-replaygain`, `technical.audio-ebu-r128`, `technical.audio-true-peak`, `technical.audio-stream-count`, `technical.audio-track-id`, `technical.audio-track-name` |
-| 画像 | `artwork.cover`, `artwork.thumbnail`（画像バイナリ自体は文字列化しないため空値） |
+### キャッシュをクリア
 
-記法は次のとおりです。
+現在のフォルダーに関する保存済みメタデータキャッシュ、サムネイルキャッシュ、技術情報キャッシュを削除してから、一覧を読み込み直します。動画ファイル自体は削除・変更しません。
 
-* `\work.title`：`\`の後ろをIDとして置換し、`\`自体は出力しません。
-* `[\credits.cast.0]`：`[]`は通常の記号として残し、内部のIDを置換します。
-* `{work.title}`：IDを置換する短縮記法で、`{}`は出力しません。
-* `{\work.title}`：`{}`を通常の記号として残し、内部のIDを置換します。
+### 表示言語
 
-値が空の項目は空文字として置換されます。画像のように文字列値を持たない項目は安全のため空文字になります。Windowsのファイル名に使用できない文字は `_` に置換され、元の拡張子は維持されます。
+右クリックメニューの「表示言語」から日本語または英語を選べます。選択した言語は保存され、画面を再起動せずに表示へ反映されます。
 
-互換入力として、`出演者0`、`タイトル`、`品番`も使用できます。ただし、保存される既定テンプレートでは将来変更されない安定IDを使用します。
+## 詳細画面
 
-### 管理可能なタグ項目と読み取り専用項目
+### 動画再生
 
-Archivioは動画ファイルを正本として、MP4／MKVの標準タグとArchivio独自タグを管理します。詳細画面で編集できる主な項目は次のとおりです。
+詳細画面上部の「再生」へ切り替えると、選択中の動画を画面内で再生します。再生中は誤操作を防ぐため、画像操作やタグ保存などの編集ボタンは使用できません。左右矢印キーで5秒移動、上下矢印キーで音量を5%変更、スペースキーで再生／一時停止できます。
 
-| 分類 | 管理項目 |
-| --- | --- |
-| 作品情報 | タイトル、サブタイトル、原題、別名・別タイトル、説明、あらすじ、コメント、キーワード、ジャンル、コンテンツ種別 |
-| 人物・スタッフ | 出演者、役名、主演、監督などのスタッフ、制作会社・スタジオ、配給会社、発行元・出版社 |
-| シリーズ | シリーズ名、シーズン番号、エピソード番号、エピソードタイトル、エピソードID、シーズン／エピソード総数、公開年、パート番号 |
-| 日付 | 発売日、録画日、撮影日、購入日、Archivio登録日時、Archivio最終更新日時 |
-| 評価・視聴 | 評価、年齢区分、視聴回数、お気に入り、視聴済み、視聴日、最終再生日時、再生位置、個人メモ、ユーザー独自タグ |
-| 識別・入手 | 品番、バーコード、IMDb／TMDB／TVDB ID、購入価格、通貨、購入先、購入URL、入手元、原媒体 |
-| 権利・場所 | 著作権者、ライセンス、出典、撮影場所、国 |
-| 画像 | カバー画像、ポスター、バナー、サムネイル、複数画像 |
+### キャプチャ
 
-動画コーデック、解像度、フレームレート、ビットレート、HDR、色域、ストリーム情報、音声コーデック、サンプルレート、チャンネル数などの技術情報は取得専用で、一覧と詳細画面に表示します。これらはタグ保存の編集対象ではありません。
+動画再生中に「キャプチャ」を押すと、現在の再生位置のフレームを画像として取得し、カバー画像の編集内容へ追加します。動画ファイルへ書き込むには、カバー画像表示へ戻り「画像保存」を押してください。
 
-MP4／MKV以外の形式は読み取り可能な情報のみ扱い、書き込みできない項目は保存対象から除外します。標準タグやArchivio独自タグの保存可否はコンテナとタグ仕様に依存するため、保存後は再読み込みして確認してください。
+### 一覧作成
 
----
+「一覧作成」は動画の長さに応じた複数のフレームを取得し、5×5のサムネイルシートを作成します。生成画像はカバー画像の編集内容へ追加されますが、その時点では動画ファイルに保存されません。「画像保存」で書き込んでください。作成中は関連ボタンが無効になります。
 
-## FFmpeg & FFprobe の有無に関する処理と統合仕様
+### 画像保存・表示
 
-Archivioは、動画ファイルの技術分析とコンテナ処理に公式のコマンドラインユーティリティである **FFmpeg** および **FFprobe** を利用します。
-これらは通常セットで配布されており（公式のFFmpegスタティックビルド等）、FFmpegの `bin` フォルダをシステムの環境変数 `PATH` に登録するだけで、Archivio側のすべての機能が有効化されます。
+カバー画像表示では、選択中の動画に埋め込まれた画像を表示し、複数画像がある場合は切り替えて確認できます。追加・置き換え・削除した画像やキャプチャ画像は編集状態として保持されます。「画像保存」を押すと動画ファイルへ反映します。保存中は対象ファイルの操作ボタンが無効になり、完了・失敗は上部のメッセージ領域に表示されます。
 
-### 1. FFprobe: 技術仕様メタデータの抽出
-動画ファイルから圧縮コーデック、音声ストリーム形式、高精度なビットレート、解像度などの詳細な技術仕様情報を抽出するために、FFprobeを優先的に使用します。
-* **FFprobe が利用可能な場合:** Archivioはバックグラウンドでプロセスを起動し、そのJSON出力を解析して詳細なストリーム情報を技術仕様欄に表示します。
-* **FFprobe が利用不可能な場合（安全な代替処理）:**
-  * システム上でFFprobeが検出できない場合、**Archivioはネイティブの Windows Shell API による情報取得へ自動でフォールバックします。**
-  * Windowsがファイル情報として持っている基本的な情報（再生時間や解像度など）を代替取得し、ユーザーに表示します。
-  * FFprobeが不在であるというステータス（`_ffprobeAvailability = -1`）をスレッド安全にキャッシュすることで、存在しないプロセスを何度も起動しようとする「無駄なプロセス生成」を防ぎ、アプリ全体の描画パフォーマンスを維持します。
-  * *Tip:* ユーザーは `AppData/Local/Archivio/settings.json` 内の `FfprobePath` 項目に直接FFprobeの実行ファイルパスを指定することも可能です。
+### 画像追加
 
-### 2. FFmpeg: 動画コンテナの超高速再MUX
-動画一覧の右クリックメニューから利用できる **「Ffmpegでの再MUX」** 機能にFFmpegを使用します。動画コンテナに `-movflags +faststart` を適用して再マウントし、ウェブでの即時再生に最適化されたストリーマブルな動画ファイルを作成します。
-* **FFmpeg が利用可能な場合:** 元ファイルを変更せずバックグラウンドで再MUXします。新しいファイルは再走査を待たず一覧の隣に挿入され、非同期に解析・キャッシュされます。出力名が既に存在する場合は連番を付け、既存ファイルを上書きしません。
-* **FFmpeg が利用不可能な場合:**
-  * **強制終了の防止:** プロセス起動エラー（`Win32Exception` 等）を完全に例外処理でキャッチし、アプリがフリーズしたりクラッシュしたりするのを絶対に防ぎます。
-  * **ユーザーへの親切な案内:** 処理を安全に終了したうえで、ステータスバー上に以下のローカライズされたわかりやすいエラーメッセージを提示します：
-    * *日本語:* `"ffmpegがシステムにインストールされていないか、環境変数 PATH に登録されていません。"`
-    * *英語:* `"FFmpeg is not installed on the system, or not registered in the PATH environment variable."`
-  * **安全な状態リセットとログ:** 処理中状態を示すインジケーターを安全に解除し、ログファイル `C:\Users\<ユーザー名>\AppData\Local\Archivio\Archivio.log` に診断エラーの詳細を出力します。
+「追加」から画像ファイルを選択してカバー画像へ加えます。画像をカバー画像領域へドラッグ＆ドロップして追加することもできます。対応形式はJPEGとPNGです。追加後に「画像保存」を押すまでは動画ファイルに書き込まれません。
 
----
+### 画像削除
 
-## システム要件
-* **対応OS:** Windows 10 (バージョン 1809、ビルド 17763 以降) または Windows 11
-* **ランタイム:** .NET 10.0 Desktop Runtime（x64）
-* **外部ツール (任意):** FFmpeg/FFprobe (高精度な仕様分析、および「再MUX」機能の利用に必要)
+表示中の画像を「削除」で編集内容から取り除きます。動画ファイルへの反映は「画像保存」を押したときに行われます。
 
-## 外部言語ファイルの追加（ボランティア翻訳）
-Archivioは、外部ファイルを配置するだけで簡単に新しい表示言語を追加できます：
-1. アプリインストールディレクトリの `Assets/Locale/` フォルダを開きます。
-2. 新しい言語ファイル `[言語コード].json`（例：フランス語なら `fr.json`）を配置します。
-3. JSONファイル内に `\"LanguageName\": \"Français\"` と各キーの翻訳を記述します。
-次回起動時、右クリックの「表示言語 / Language」メニューに新しい言語が自動的に追加され、選択可能になります。
+### 画像置き換え
+
+「置き換え」から画像を選び、現在選択中の画像と差し替えます。置き換えを動画ファイルへ反映するには「画像保存」が必要です。
+
+### タグ情報保存
+
+詳細画面の編集項目を変更し、「タグ保存」を押すと選択中の動画へ保存します。保存中は再生、キャプチャ、一覧作成、画像編集、画像保存、タグ保存などの操作が無効になります。処理の進行・完了・失敗は上部のメッセージ領域で確認できます。
+
+書き込み可能な項目や書き込み方式はファイル形式により異なります。MP4系（MP4、M4V、MOV）およびMatroska系（MKV、WebM）には形式別の処理を行います。その他の形式は読み取り専用として扱い、書き込みできない項目は保存されません。大切なファイルは保存前にバックアップし、保存後に内容を確認してください。
+
+### 表示列数変更
+
+詳細画面上部の選択欄から、編集可能なタグ項目を1列または2列で表示できます。選択した列数は設定に保存され、次回起動時に復元されます。
+
+### 技術情報表示
+
+詳細画面の技術情報欄には、動画・音声の再生時間、解像度、フレームレート、ビットレート、コーデックなどを表示します。技術情報は取得専用で、タグ編集・保存の対象ではありません。
+
+## FFmpeg／FFprobeについて
+
+FFmpegとFFprobeは任意の外部ツールです。利用するには実行ファイルを環境変数 `PATH` に登録してください。FFmpegは再MUX、キャプチャ、一覧作成に使用します。FFprobeはストリームごとの詳細な技術情報の取得に使用します。
+
+FFprobeが見つからない場合は、Windowsのファイルプロパティ取得へフォールバックします。その場合、ストリーム数など一部の技術情報を取得できないことがあります。FFmpegは `settings.json` の `FfprobePath` に指定したFFprobe実行ファイルと同じフォルダー、環境変数 `PATH`、Windowsの `where.exe` を使って検索します。FFmpegが利用できない場合、再MUX、キャプチャ、一覧作成は実行できません。エラーは画面に表示され、詳細はログに記録されます。
+
+設定ファイルは `%LOCALAPPDATA%\Archivio\settings.json` に保存されます。ログは `%LOCALAPPDATA%\Archivio\Archivio.log` に出力されます。
