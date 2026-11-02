@@ -38,15 +38,15 @@ namespace Archivio.ViewModels
         /// <summary>前回開いていた動画フォルダのパス。</summary>
         public string LastFolderPath { get; set; } = string.Empty;
         /// <summary>メタデータからファイル名を生成するテンプレート。安定した項目IDを使用します。</summary>
-        public string FileNameTemplate { get; set; } = "[{credits.cast.0}]{work.title}[{identifiers.catalog-number}]";
+        public string FileNameTemplate { get; set; } = "[\\credits.cast.0]\\work.title[\\identifiers.catalog-number]";
         /// <summary>動画一覧をサムネイル表示するかどうか。既存設定では詳細表示になる。</summary>
         public bool IsThumbnailView { get; set; } = false;
         /// <summary>タイルサイズ。0=小、1=標準、2=大、3=特大。</summary>
         public int ThumbnailTileSizeIndex { get; set; } = 1;
         /// <summary>任意の FFprobe 実行ファイル。空欄の場合は PATH 上の ffprobe を試す。</summary>
         public string FfprobePath { get; set; } = string.Empty;
-        /// <summary>動画ファイルを一時ファイルへ複製せず、実ファイルへ直接保存する危険な高速モード。</summary>
-        public bool UseDirectFileWriteMode { get; set; } = false;
+        /// <summary>動画ファイルを一時ファイルへ複製せず、実ファイルへ直接保存する高速保存モード。</summary>
+        public bool UseDirectFileWriteMode { get; set; } = true;
         /// <summary>カスタム項目の定義のみを保持する。作品ごとの値は動画ファイル内に保存する。</summary>
         public List<CustomMetadataFieldDefinition> CustomMetadataFields { get; set; } = new();
     }

@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
+using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace Archivio.ViewModels
 {
@@ -10,6 +11,35 @@ namespace Archivio.ViewModels
     {
         private const uint MaxWidth = 360;
         private const uint MaxHeight = 320;
+
+        public static async Task<BitmapImage> CreateBitmapImageAsync(
+            byte[] imageData,
+            int decodePixelWidth = 0,
+            int decodePixelHeight = 0)
+        {
+            if (imageData is null || imageData.Length == 0)
+            {
+                throw new ArgumentException("画像データが空です。", nameof(imageData));
+            }
+
+            var stream = new InMemoryRandomAccessStream();
+            using (var writer = new DataWriter(stream.GetOutputStreamAt(0)))
+            {
+                writer.WriteBytes(imageData);
+                await writer.StoreAsync();
+                await writer.FlushAsync();
+            }
+
+            stream.Seek(0);
+            var bitmap = new BitmapImage();
+            if (decodePixelWidth > 0) bitmap.DecodePixelWidth = decodePixelWidth;
+            if (decodePixelHeight > 0) bitmap.DecodePixelHeight = decodePixelHeight;
+
+            await bitmap.SetSourceAsync(stream);
+            // BitmapImage の非同期デコード中にストリームが破棄されることによる XAML レンダラーのクラッシュ (Access Violation) を防ぐため、
+            // stream はここで Dispose せずガベージコレクションに委ねます。
+            return bitmap;
+        }
 
         public static async Task<(byte[] Data, string MimeType)> ResizeAsync(
             byte[] imageData,

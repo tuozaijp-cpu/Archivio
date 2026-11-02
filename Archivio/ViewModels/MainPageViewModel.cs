@@ -213,7 +213,8 @@ namespace Archivio.ViewModels
                         ApplyMetadataToItem(listItem, meta);
                     }
                 },
-                OnCoverArtSaved
+                onCoverArtSaved: OnCoverArtSaved,
+                setSavingStatus: SetStatusProgress
             );
 
             // 起動時に非同期でキャッシュのガベージコレクションを実行
@@ -447,6 +448,37 @@ namespace Archivio.ViewModels
             await RefreshFilesAsync();
         }
 
+        public async Task OpenFolderFromLaunchArgumentAsync(string folderArgument)
+        {
+            ArgumentNullException.ThrowIfNull(folderArgument);
+            var folderPath = folderArgument.Trim();
+            if (folderPath.Length >= 2 && folderPath[0] == '"' && folderPath[^1] == '"')
+            {
+                folderPath = folderPath[1..^1];
+            }
+
+            try
+            {
+                var folder = await StorageFolder.GetFolderFromPathAsync(folderPath);
+                FolderPath = folder.Path;
+
+                var settings = SettingsManager.LoadSettings();
+                settings.LastFolderPath = FolderPath;
+                SettingsManager.SaveSettings(settings);
+
+                Videos = new ObservableCollection<VideoFileItem>();
+                SelectedVideo = null;
+                await RefreshFilesAsync();
+            }
+            catch (Exception ex)
+            {
+                SetStatusError(
+                    LanguageManager.GetString("Msg_LaunchFolderOpenFailed", folderPath),
+                    ex,
+                    folderPath);
+            }
+        }
+
         public async Task RefreshFilesAsync()
         {
             if (string.IsNullOrWhiteSpace(FolderPath))
@@ -630,7 +662,6 @@ namespace Archivio.ViewModels
 
             var oldPath = item.FullPath;
 
-            item.IsSaving = true;
             HasOperationError = false;
             try
             {
@@ -676,10 +707,6 @@ namespace Archivio.ViewModels
                 item.SyncFromStorageFile();
                 SetStatusError(LanguageManager.GetString("Msg_RenameFailed", ex.Message), ex, item.FullPath);
             }
-            finally
-            {
-                item.IsSaving = false;
-            }
         }
 
         public async Task DeleteVideoAsync(VideoFileItem item)
@@ -692,7 +719,6 @@ namespace Archivio.ViewModels
             var file = await item.GetFileAsync();
             var pathToRemove = item.FullPath;
 
-            item.IsSaving = true;
             HasOperationError = false;
             try
             {
@@ -727,10 +753,6 @@ namespace Archivio.ViewModels
             catch (Exception ex)
             {
                 SetStatusError(LanguageManager.GetString("Msg_DeleteFailed", ex.Message), ex, item.FullPath);
-            }
-            finally
-            {
-                item.IsSaving = false;
             }
         }
 
@@ -1025,23 +1047,19 @@ namespace Archivio.ViewModels
         {
             await DispatcherHelper.RunOnUIThreadAsync(async () =>
             {
-                using var stream = new InMemoryRandomAccessStream();
-                using var writer = new DataWriter(stream.GetOutputStreamAt(0));
-                writer.WriteBytes(imageData);
-                await writer.StoreAsync();
-                await writer.FlushAsync();
-                stream.Seek(0);
-
-                var bitmap = new BitmapImage
+                try
                 {
-                    DecodePixelWidth = 360,
-                    DecodePixelHeight = 320
-                };
-                await bitmap.SetSourceAsync(stream);
-
-                item.ThumbnailImage = bitmap;
-                item.ThumbnailLoadFailed = false;
-                item.IsThumbnailLoading = false;
+                    var bitmap = await VideoThumbnailImageProcessor.CreateBitmapImageAsync(imageData, decodePixelWidth: 360, decodePixelHeight: 320);
+                    item.ThumbnailImage = bitmap;
+                    item.ThumbnailLoadFailed = false;
+                    item.IsThumbnailLoading = false;
+                }
+                catch
+                {
+                    item.ThumbnailImage = null;
+                    item.ThumbnailLoadFailed = true;
+                    item.IsThumbnailLoading = false;
+                }
             });
         }
 
@@ -1501,15 +1519,7 @@ namespace Archivio.ViewModels
                             var list = new ObservableCollection<BitmapImage>();
                             foreach (var coverArt in imagesData)
                             {
-                                using var stream = new InMemoryRandomAccessStream();
-                                using var writer = new DataWriter(stream.GetOutputStreamAt(0));
-                                writer.WriteBytes(coverArt.Data);
-                                await writer.StoreAsync();
-                                await writer.FlushAsync();
-                                stream.Seek(0);
-
-                                var bitmap = new BitmapImage();
-                                await bitmap.SetSourceAsync(stream);
+                                var bitmap = await VideoThumbnailImageProcessor.CreateBitmapImageAsync(coverArt.Data);
                                 list.Add(bitmap);
                             }
                             item.CoverArtImages = imagesData;
@@ -1602,16 +1612,8 @@ namespace Archivio.ViewModels
 
             try
             {
-                using var stream = await file.OpenReadAsync();
-                var bytes = new byte[stream.Size];
-                using var reader = new DataReader(stream);
-                await reader.LoadAsync((uint)stream.Size);
-                reader.ReadBytes(bytes);
-
-                // UIスレッド上でBitmapImageの生成とコレクション追加
-                var bitmap = new BitmapImage();
-                stream.Seek(0);
-                await bitmap.SetSourceAsync(stream);
+                var bytes = await File.ReadAllBytesAsync(file.Path);
+                var bitmap = await VideoThumbnailImageProcessor.CreateBitmapImageAsync(bytes);
 
                 SelectedVideo.CoverArtImages.Add(new CoverArtImageData
                 {
@@ -1712,6 +1714,17 @@ namespace Archivio.ViewModels
             }
 
             HasOperationError = true;
+            StatusMessage = message;
+        }
+
+        private void SetStatusProgress(VideoFileItem item, string message)
+        {
+            if (SelectedVideo != item)
+            {
+                return;
+            }
+
+            HasOperationError = false;
             StatusMessage = message;
         }
 

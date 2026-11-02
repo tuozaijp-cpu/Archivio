@@ -905,7 +905,7 @@ namespace Archivio.Views
             }
         }
 
-        private void DetailFieldColumnsComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void DetailFieldColumnsComboBox_SelectionChangedCore(object sender, SelectionChangedEventArgs e)
         {
             if (_isRestoringLayoutSettings || !IsLoaded)
             {
@@ -953,7 +953,7 @@ namespace Archivio.Views
                 .Where(fieldId => !string.IsNullOrWhiteSpace(fieldId))!;
         }
 
-        private async void ConfigureDetailsButton_Click(object sender, RoutedEventArgs e)
+        private async void ConfigureDetailsButton_ClickCore(object sender, RoutedEventArgs e)
         {
             var settings = SettingsManager.LoadSettings();
             var detailOrder = NormalizeDetailFieldOrder(settings.DetailFieldOrder);
@@ -1138,7 +1138,7 @@ namespace Archivio.Views
             return (group.Tag as StackPanel)?.Children.OfType<Grid>() ?? Enumerable.Empty<Grid>();
         }
 
-        private async void ConfigureColumnsButton_Click(object sender, RoutedEventArgs e)
+        private async void ConfigureColumnsButton_ClickCore(object sender, RoutedEventArgs e)
         {
             var visibleIds = NormalizeVisibleListFieldIds(VideoListDataGrid.Columns
                 .Where(column => column.Visibility == Visibility.Visible)
@@ -1220,7 +1220,7 @@ namespace Archivio.Views
             SettingsManager.SaveSettings(settings);
         }
 
-        private async void ConfigureCustomFieldsButton_Click(object sender, RoutedEventArgs e)
+        private async void ConfigureCustomFieldsButton_ClickCore(object sender, RoutedEventArgs e)
         {
             var settings = SettingsManager.LoadSettings();
             settings.CustomMetadataFields ??= new List<CustomMetadataFieldDefinition>();
@@ -1420,12 +1420,12 @@ namespace Archivio.Views
             ThumbnailViewToggleButton.IsChecked = true;
         }
 
-        private async void OnSaveClicked(object sender, RoutedEventArgs e)
+        private async void OnSaveClickedCore(object sender, RoutedEventArgs e)
         {
             await ViewModel.Details.SaveMetadataAsync();
         }
 
-        private async void DirectFileWriteModeCheckBox_Click(object sender, RoutedEventArgs e)
+        private async void DirectFileWriteModeCheckBox_ClickCore(object sender, RoutedEventArgs e)
         {
             var settings = SettingsManager.LoadSettings();
             var requested = DirectFileWriteModeCheckBox.IsChecked == true;
@@ -1497,6 +1497,12 @@ namespace Archivio.Views
         protected override async void OnNavigatedTo(NavigationEventArgs e)
         {
             base.OnNavigatedTo(e);
+            if (e.Parameter is string folderArgument && !string.IsNullOrWhiteSpace(folderArgument))
+            {
+                await ViewModel.OpenFolderFromLaunchArgumentAsync(folderArgument);
+                return;
+            }
+
             await ViewModel.RefreshFilesAsync();
         }
 
@@ -1520,12 +1526,12 @@ namespace Archivio.Views
             await ViewModel.ExportVideosToCsvAsync();
         }
 
-        private async void AddImageButton_Click(object sender, RoutedEventArgs e)
+        private async void AddImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
             await ViewModel.Details.AddCoverArtImageAsync();
         }
 
-        private void CoverArt_DragOver(object sender, DragEventArgs e)
+        private void CoverArt_DragOverCore(object sender, DragEventArgs e)
         {
             e.AcceptedOperation = e.DataView.Contains(StandardDataFormats.StorageItems)
                 ? DataPackageOperation.Copy
@@ -1533,7 +1539,7 @@ namespace Archivio.Views
             e.Handled = true;
         }
 
-        private async void CoverArt_Drop(object sender, DragEventArgs e)
+        private async void CoverArt_DropCore(object sender, DragEventArgs e)
         {
             if (ViewModel.SelectedVideo is null
                 || !e.DataView.Contains(StandardDataFormats.StorageItems))
@@ -1585,7 +1591,7 @@ namespace Archivio.Views
             e.Handled = true;
         }
 
-        private async void CaptureFrameButton_Click(object sender, RoutedEventArgs e)
+        private async void CaptureFrameButton_ClickCore(object sender, RoutedEventArgs e)
         {
             if (!_isPlaybackView || _videoPlayerElement?.Source is null || _playbackPlayer is null
                 || ViewModel.SelectedVideo is null)
@@ -1662,7 +1668,7 @@ namespace Archivio.Views
             }
         }
 
-        private async void CreateThumbnailSheetButton_Click(object sender, RoutedEventArgs e)
+        private async void CreateThumbnailSheetButton_ClickCore(object sender, RoutedEventArgs e)
         {
             if (_isThumbnailSheetGenerating || ViewModel.SelectedVideo is null)
             {
@@ -1840,17 +1846,17 @@ namespace Archivio.Views
                 .FirstOrDefault(File.Exists);
         }
 
-        private async void ReplaceImageButton_Click(object sender, RoutedEventArgs e)
+        private async void ReplaceImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
             await ViewModel.Details.ReplaceCoverArtImageAsync();
         }
 
-        private void DeleteImageButton_Click(object sender, RoutedEventArgs e)
+        private void DeleteImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
             ViewModel.Details.DeleteCoverArtImage();
         }
 
-        private void MainPage_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+        private void MainPage_KeyDownCore(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
         {
             if (!_isPlaybackView
                 || _videoPlayerElement?.Source is null
@@ -1914,7 +1920,7 @@ namespace Archivio.Views
                 : position;
         }
 
-        private async void DataGrid_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+        private async void DataGrid_DoubleTappedCore(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
         {
             if (ViewModel.SelectedVideo is not null)
             {
@@ -1965,7 +1971,7 @@ namespace Archivio.Views
                     : LanguageManager.GetString("Tooltip_CreateThumbnailSheet"));
         }
 
-        private async void CoverArtViewToggleButton_Click(object sender, RoutedEventArgs e)
+        private async void CoverArtViewToggleButton_ClickCore(object sender, RoutedEventArgs e)
         {
             _isPlaybackView = false;
             CoverArtViewToggleButton.IsChecked = true;
@@ -1973,7 +1979,7 @@ namespace Archivio.Views
             await UpdatePlaybackSourceAsync();
         }
 
-        private async void VideoPlaybackToggleButton_Click(object sender, RoutedEventArgs e)
+        private async void VideoPlaybackToggleButton_ClickCore(object sender, RoutedEventArgs e)
         {
             _isPlaybackView = true;
             CoverArtViewToggleButton.IsChecked = false;
@@ -2061,7 +2067,7 @@ namespace Archivio.Views
             UpdateContextMenuState();
         }
 
-        private async void CoverArt_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+        private async void CoverArt_DoubleTappedCore(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
         {
             if (ViewModel.SelectedVideo is not null)
             {
@@ -2070,7 +2076,7 @@ namespace Archivio.Views
             }
         }
 
-        private void CoverArtFlipView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void CoverArtFlipView_SelectionChangedCore(object sender, SelectionChangedEventArgs e)
         {
             if (ViewModel.SelectedVideo is not null && sender is FlipView flipView)
             {
@@ -2078,12 +2084,12 @@ namespace Archivio.Views
             }
         }
 
-        private async void SaveImageButton_Click(object sender, RoutedEventArgs e)
+        private async void SaveImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
             await ViewModel.Details.SaveCoverArtAsync();
         }
 
-        private void FilterTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        private void FilterTextBox_TextChangedCore(object sender, TextChangedEventArgs e)
         {
             if (sender is TextBox textBox)
             {
@@ -2091,7 +2097,7 @@ namespace Archivio.Views
             }
         }
 
-        private void VideoListDataGrid_Sorting(object sender, CommunityToolkit.WinUI.UI.Controls.DataGridColumnEventArgs e)
+        private void VideoListDataGrid_SortingCore(object sender, CommunityToolkit.WinUI.UI.Controls.DataGridColumnEventArgs e)
         {
             var dataGrid = (CommunityToolkit.WinUI.UI.Controls.DataGrid)sender;
             var column = e.Column;
@@ -2128,12 +2134,12 @@ namespace Archivio.Views
             ViewModel.Sort(propertyName, ascending);
         }
 
-        private void FilterButton_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        private void FilterButton_PointerPressedCore(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         {
             e.Handled = true; // Prevents the parent DataGridColumnHeader from swallowing the click and sorting!
         }
 
-        private void FilterFlyout_Opening(object sender, object e)
+        private void FilterFlyout_OpeningCore(object sender, object e)
         {
             var flyout = sender as Flyout;
             if (flyout == null) return;
@@ -2240,7 +2246,7 @@ namespace Archivio.Views
             }
         }
 
-        private void SearchValuesTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        private void SearchValuesTextBox_TextChangedCore(object sender, TextChangedEventArgs e)
         {
             var textBox = sender as TextBox;
             if (textBox == null) return;
@@ -2265,7 +2271,7 @@ namespace Archivio.Views
             }
         }
 
-        private void SelectAllValues_Click(object sender, RoutedEventArgs e)
+        private void SelectAllValues_ClickCore(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
             if (button == null) return;
@@ -2286,7 +2292,7 @@ namespace Archivio.Views
             }
         }
 
-        private void ClearAllValues_Click(object sender, RoutedEventArgs e)
+        private void ClearAllValues_ClickCore(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
             if (button == null) return;
@@ -2307,7 +2313,7 @@ namespace Archivio.Views
             }
         }
 
-        private void ApplyFilter_Click(object sender, RoutedEventArgs e)
+        private void ApplyFilter_ClickCore(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
             var stackPanel = FindVisualParent<StackPanel>(button);
@@ -2333,7 +2339,7 @@ namespace Archivio.Views
             _activeFlyout?.Hide();
         }
 
-        private void ClearFilter_Click(object sender, RoutedEventArgs e)
+        private void ClearFilter_ClickCore(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
             var stackPanel = FindVisualParent<StackPanel>(button);
@@ -2419,7 +2425,7 @@ namespace Archivio.Views
             ClearCacheMenuItem.IsEnabled = isFolderSelected;
         }
 
-        private async void RenameMenuItem_Click(object sender, RoutedEventArgs e)
+        private async void RenameMenuItem_ClickCore(object sender, RoutedEventArgs e)
         {
             var selectedVideo = ViewModel.SelectedVideo;
             if (selectedVideo == null) return;
@@ -2453,7 +2459,7 @@ namespace Archivio.Views
             }
         }
 
-        private async void RenameFromMetadataMenuItem_Click(object sender, RoutedEventArgs e)
+        private async void RenameFromMetadataMenuItem_ClickCore(object sender, RoutedEventArgs e)
         {
             var selectedVideo = ViewModel.SelectedVideo;
             if (selectedVideo is null)
@@ -2476,9 +2482,9 @@ namespace Archivio.Views
             };
             void UpdatePreview()
             {
-                var result = TryBuildMetadataFileName(selectedVideo, templateBox.Text, out var name, out _);
-                previewText.Text = result
-                    ? LanguageManager.GetString("Dialog_RenameFromMetadata_Preview", name)
+                var filenameResult = new MetadataFileNameTemplateService().Build(selectedVideo, templateBox.Text);
+                previewText.Text = filenameResult.Succeeded
+                    ? LanguageManager.GetString("Dialog_RenameFromMetadata_Preview", filenameResult.FileName)
                     : LanguageManager.GetString("Msg_RenameFromMetadata_Empty");
             }
             templateBox.TextChanged += (_, _) => UpdatePreview();
@@ -2510,14 +2516,17 @@ namespace Archivio.Views
             }
 
             var template = templateBox.Text.Trim();
-            if (!TryBuildMetadataFileName(selectedVideo, template, out var newName, out var invalidIds))
+            var filenameResult = new MetadataFileNameTemplateService().Build(selectedVideo, template);
+            if (!filenameResult.Succeeded)
             {
-                var message = invalidIds.Count > 0
-                    ? LanguageManager.GetString("Msg_RenameFromMetadata_InvalidTemplate", string.Join(", ", invalidIds))
+                var message = filenameResult.InvalidIds.Count > 0
+                    ? LanguageManager.GetString("Msg_RenameFromMetadata_InvalidTemplate", string.Join(", ", filenameResult.InvalidIds))
                     : LanguageManager.GetString("Msg_RenameFromMetadata_Empty");
                 ViewModel.SetPlaybackError(message);
                 return;
             }
+
+            var newName = filenameResult.FileName;
 
             settings.FileNameTemplate = template;
             SettingsManager.SaveSettings(settings);

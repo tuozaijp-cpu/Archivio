@@ -29,6 +29,7 @@ namespace Archivio.ViewModels
         private readonly Action<bool> _setBusy;
         private readonly Action<string, Exception?, string?> _setError;
         private readonly Action<string> _setSuccess;
+        private readonly Action<VideoFileItem, string> _setSavingStatus;
         private readonly Func<string> _getRootFolderPath;
         private readonly Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? _onMetadataUpdated;
         private readonly Action<string>? _onCoverArtSaved;
@@ -45,7 +46,8 @@ namespace Archivio.ViewModels
             Action<string> setSuccess,
             Func<string> getRootFolderPath,
             Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? onMetadataUpdated = null,
-            Action<string>? onCoverArtSaved = null)
+            Action<string>? onCoverArtSaved = null,
+            Action<VideoFileItem, string>? setSavingStatus = null)
         {
             _metadataService = metadataService ?? throw new ArgumentNullException(nameof(metadataService));
             _metadataReadSemaphore = metadataReadSemaphore ?? throw new ArgumentNullException(nameof(metadataReadSemaphore));
@@ -56,6 +58,7 @@ namespace Archivio.ViewModels
             _getRootFolderPath = getRootFolderPath ?? throw new ArgumentNullException(nameof(getRootFolderPath));
             _onMetadataUpdated = onMetadataUpdated;
             _onCoverArtSaved = onCoverArtSaved;
+            _setSavingStatus = setSavingStatus ?? ((_, _) => { });
         }
 
         public VideoFileItem? SelectedVideo
@@ -166,15 +169,7 @@ namespace Archivio.ViewModels
                             var list = new ObservableCollection<BitmapImage>();
                             foreach (var coverArt in imagesData)
                             {
-                                using var stream = new InMemoryRandomAccessStream();
-                                using var writer = new DataWriter(stream.GetOutputStreamAt(0));
-                                writer.WriteBytes(coverArt.Data);
-                                await writer.StoreAsync();
-                                await writer.FlushAsync();
-                                stream.Seek(0);
-
-                                var bitmap = new BitmapImage();
-                                await bitmap.SetSourceAsync(stream);
+                                var bitmap = await VideoThumbnailImageProcessor.CreateBitmapImageAsync(coverArt.Data);
                                 list.Add(bitmap);
                             }
 
@@ -235,10 +230,9 @@ namespace Archivio.ViewModels
             }
 
             var targetVideo = SelectedVideo;
-            targetVideo.IsSaving = true;
-            targetVideo.SaveFailed = false;
             _setBusy(true);
             _setError(string.Empty, null, null); // Clear message
+            _setSavingStatus(targetVideo, $"{targetVideo.FileName} {LanguageManager.GetString("Status_TagSaving")}");
             try
             {
                 // キャッシュに頼らず、再度ファイルから直接メタデータを読み込む
@@ -257,12 +251,13 @@ namespace Archivio.ViewModels
                     {
                         await DispatcherHelper.RunOnUIThreadAsync(() =>
                         {
-                            targetVideo.SaveFailed = false;
-                            
                             // _originalValuesをファイルから読み込んだ最新値に更新することで変更トラッキングをリセットする
                             targetVideo.UpdateOriginalValuesFromSnapshot(freshMeta);
                             
-                            _setSuccess(LanguageManager.GetString("Msg_NoChanges"));
+                            if (SelectedVideo == targetVideo)
+                            {
+                                _setSuccess(LanguageManager.GetString("Msg_NoChanges"));
+                            }
                             OnPropertyChanged(nameof(HasPendingChanges));
                         });
                         return;
@@ -280,7 +275,11 @@ namespace Archivio.ViewModels
 
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
-                    targetVideo.SaveFailed = !result.Succeeded;
+                    if (SelectedVideo != targetVideo)
+                    {
+                        return;
+                    }
+
                     if (result.Succeeded)
                     {
                         _setSuccess(DisplayFormatHelper.FormatOperationMessage(result));
@@ -299,13 +298,16 @@ namespace Archivio.ViewModels
                 AppLogger.Error("メタデータの保存に失敗しました", ex, targetVideo.FullPath);
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
-                    targetVideo.SaveFailed = true;
+                    if (SelectedVideo != targetVideo)
+                    {
+                        return;
+                    }
+
                     _setError(LanguageManager.GetString("Msg_SaveError", ex.Message), ex, targetVideo.FullPath);
                 });
             }
             finally
             {
-                targetVideo.IsSaving = false;
                 _setBusy(false);
             }
         }
@@ -318,10 +320,9 @@ namespace Archivio.ViewModels
             }
 
             var targetVideo = SelectedVideo;
-            targetVideo.IsSaving = true;
-            targetVideo.SaveFailed = false;
             _setBusy(true);
             _setError(string.Empty, null, null); // Clear message
+            _setSavingStatus(targetVideo, $"{targetVideo.FileName} {LanguageManager.GetString("Status_ImageSaving")}");
             try
             {
                 var result = await SaveCoverArtAsync(targetVideo);
@@ -334,7 +335,11 @@ namespace Archivio.ViewModels
 
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
-                    targetVideo.SaveFailed = !result.Succeeded;
+                    if (SelectedVideo != targetVideo)
+                    {
+                        return;
+                    }
+
                     if (result.Succeeded)
                     {
                         _setSuccess(DisplayFormatHelper.FormatOperationMessage(result));
@@ -352,13 +357,16 @@ namespace Archivio.ViewModels
                 AppLogger.Error("カバー画像の保存に失敗しました", ex, targetVideo.FullPath);
                 await DispatcherHelper.RunOnUIThreadAsync(() =>
                 {
-                    targetVideo.SaveFailed = true;
+                    if (SelectedVideo != targetVideo)
+                    {
+                        return;
+                    }
+
                     _setError(LanguageManager.GetString("Msg_ImageSaveError", ex.Message), ex, targetVideo.FullPath);
                 });
             }
             finally
             {
-                targetVideo.IsSaving = false;
                 _setBusy(false);
             }
         }
@@ -491,15 +499,8 @@ namespace Archivio.ViewModels
 
             try
             {
-                using var stream = await file.OpenReadAsync();
-                var bytes = new byte[stream.Size];
-                using var reader = new DataReader(stream);
-                await reader.LoadAsync((uint)stream.Size);
-                reader.ReadBytes(bytes);
-
-                var bitmap = new BitmapImage();
-                stream.Seek(0);
-                await bitmap.SetSourceAsync(stream);
+                var bytes = await File.ReadAllBytesAsync(file.Path);
+                var bitmap = await VideoThumbnailImageProcessor.CreateBitmapImageAsync(bytes);
 
                 SelectedVideo.CoverArtImages.Add(new CoverArtImageData
                 {
@@ -530,15 +531,8 @@ namespace Archivio.ViewModels
 
             try
             {
-                using var stream = await file.OpenReadAsync();
-                var bytes = new byte[stream.Size];
-                using var reader = new DataReader(stream);
-                await reader.LoadAsync((uint)stream.Size);
-                reader.ReadBytes(bytes);
-
-                var bitmap = new BitmapImage();
-                stream.Seek(0);
-                await bitmap.SetSourceAsync(stream);
+                var bytes = await File.ReadAllBytesAsync(file.Path);
+                var bitmap = await VideoThumbnailImageProcessor.CreateBitmapImageAsync(bytes);
 
                 var image = new CoverArtImageData
                 {
@@ -586,11 +580,7 @@ namespace Archivio.ViewModels
 
             try
             {
-                using var stream = new InMemoryRandomAccessStream();
-                await stream.WriteAsync(data.AsBuffer());
-                stream.Seek(0);
-                var bitmap = new BitmapImage();
-                await bitmap.SetSourceAsync(stream);
+                var bitmap = await VideoThumbnailImageProcessor.CreateBitmapImageAsync(data);
 
                 SelectedVideo.CoverArtImages.Add(new CoverArtImageData
                 {
@@ -645,15 +635,8 @@ namespace Archivio.ViewModels
 
             try
             {
-                using var stream = await file.OpenReadAsync();
-                var bytes = new byte[stream.Size];
-                using var reader = new DataReader(stream);
-                await reader.LoadAsync((uint)stream.Size);
-                reader.ReadBytes(bytes);
-
-                var bitmap = new BitmapImage();
-                stream.Seek(0);
-                await bitmap.SetSourceAsync(stream);
+                var bytes = await File.ReadAllBytesAsync(file.Path);
+                var bitmap = await VideoThumbnailImageProcessor.CreateBitmapImageAsync(bytes);
 
                 SelectedVideo.CoverArtImages[index] = new CoverArtImageData
                 {

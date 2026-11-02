@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Archivio.Models
 {
@@ -22,6 +23,144 @@ namespace Archivio.Models
 
         /// <summary>標準項目に含まれない、将来のカスタム項目。</summary>
         public Dictionary<string, MetadataValue> CustomFields { get; set; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Creates an independent document snapshot. Metadata documents are mutable because
+        /// they are bound to the editor, so snapshot boundaries must never share references.
+        /// </summary>
+        public MetadataDocument Clone()
+        {
+            EnsureInitialized();
+            var clone = new MetadataDocument
+            {
+                SchemaVersion = SchemaVersion,
+                Work = new WorkMetadata
+                {
+                    Title = Work.Title, Subtitle = Work.Subtitle, OriginalTitle = Work.OriginalTitle,
+                    AlternateTitles = Work.AlternateTitles.ToList(), SortTitle = Work.SortTitle,
+                    Description = Work.Description, Synopsis = Work.Synopsis, Comment = Work.Comment,
+                    Keywords = Work.Keywords.ToList(), Genres = Work.Genres.ToList(), Subgenres = Work.Subgenres.ToList(),
+                    ContentType = Work.ContentType, Moods = Work.Moods.ToList(), Themes = Work.Themes.ToList(),
+                    OriginalMediaType = Work.OriginalMediaType, OriginalWork = Work.OriginalWork
+                },
+                PeopleAndStaff = new PeopleAndStaffMetadata
+                {
+                    Cast = PeopleAndStaff.Cast.Select(Clone).ToList(),
+                    Crew = PeopleAndStaff.Crew.Select(Clone).ToList(),
+                    Artists = PeopleAndStaff.Artists.ToList(), ProductionCompanies = PeopleAndStaff.ProductionCompanies.ToList(),
+                    Distributors = PeopleAndStaff.Distributors.ToList(), Publishers = PeopleAndStaff.Publishers.ToList(),
+                    Labels = PeopleAndStaff.Labels.ToList()
+                },
+                Series = new SeriesMetadata
+                {
+                    Name = Series.Name, SeasonNumber = Series.SeasonNumber, EpisodeNumber = Series.EpisodeNumber,
+                    EpisodeTitle = Series.EpisodeTitle, EpisodeId = Series.EpisodeId, Network = Series.Network,
+                    SeasonCount = Series.SeasonCount, EpisodeCount = Series.EpisodeCount, PublicationYear = Series.PublicationYear,
+                    SeasonReleaseDate = Series.SeasonReleaseDate, PartNumber = Series.PartNumber, PartCount = Series.PartCount,
+                    PartOffset = Series.PartOffset
+                },
+                Dates = new MetadataDates
+                {
+                    ReleaseDate = Dates.ReleaseDate, RecordingDate = Dates.RecordingDate, FilmingDate = Dates.FilmingDate,
+                    DigitizedDate = Dates.DigitizedDate, EncodedAt = Dates.EncodedAt, TaggedAt = Dates.TaggedAt,
+                    PurchasedAt = Dates.PurchasedAt, FileCreatedAt = Dates.FileCreatedAt,
+                    ArchivioRegisteredAt = Dates.ArchivioRegisteredAt, ArchivioUpdatedAt = Dates.ArchivioUpdatedAt
+                },
+                Evaluation = new EvaluationMetadata
+                {
+                    PersonalRating = Evaluation.PersonalRating, PersonalRatingRaw = Evaluation.PersonalRatingRaw,
+                    ContentRating = Evaluation.ContentRating, ViewCount = Evaluation.ViewCount,
+                    IsFavorite = Evaluation.IsFavorite, IsWatched = Evaluation.IsWatched, WatchedAt = Evaluation.WatchedAt,
+                    LastPlayedAt = Evaluation.LastPlayedAt, PlaybackPosition = Evaluation.PlaybackPosition,
+                    ResumePosition = Evaluation.ResumePosition, PersonalNotes = Evaluation.PersonalNotes,
+                    UserTags = Evaluation.UserTags.ToList()
+                },
+                Identifiers = new IdentifierMetadata
+                {
+                    CatalogNumber = Identifiers.CatalogNumber, Barcode = Identifiers.Barcode, Isbn = Identifiers.Isbn,
+                    ImdbId = Identifiers.ImdbId, TmdbId = Identifiers.TmdbId, TvdbId = Identifiers.TvdbId,
+                    Tvdb2Id = Identifiers.Tvdb2Id, Isrc = Identifiers.Isrc, Lccn = Identifiers.Lccn,
+                    LabelCode = Identifiers.LabelCode, ArchivioId = Identifiers.ArchivioId, SourceFileId = Identifiers.SourceFileId
+                },
+                Acquisition = new AcquisitionMetadata
+                {
+                    Price = Acquisition.Price, Currency = Acquisition.Currency, Seller = Acquisition.Seller,
+                    PurchaseUrl = Acquisition.PurchaseUrl, Buyer = Acquisition.Buyer, Source = Acquisition.Source,
+                    TransactionType = Acquisition.TransactionType, OriginalMedia = Acquisition.OriginalMedia
+                },
+                Rights = new RightsMetadata
+                {
+                    CopyrightHolder = Rights.CopyrightHolder, ProductionCopyright = Rights.ProductionCopyright,
+                    License = Rights.License, UsageTerms = Rights.UsageTerms, Disclaimer = Rights.Disclaimer,
+                    Source = Rights.Source, OriginalWorkInformation = Rights.OriginalWorkInformation
+                },
+                Location = new LocationMetadata
+                {
+                    FilmingLocation = Location.FilmingLocation, ProductionLocation = Location.ProductionLocation,
+                    Country = Location.Country, Region = Location.Region, Municipality = Location.Municipality,
+                    Latitude = Location.Latitude, Longitude = Location.Longitude, Altitude = Location.Altitude
+                },
+                Artwork = new ArtworkMetadata { Assets = Artwork.Assets.Select(Clone).ToList() },
+                CustomFields = CustomFields.ToDictionary(pair => pair.Key, pair => Clone(pair.Value), StringComparer.Ordinal)
+            };
+            clone.EnsureInitialized();
+            return clone;
+        }
+
+        private static CastCredit Clone(CastCredit value) => new()
+        {
+            PersonName = value.PersonName, CharacterName = value.CharacterName, IsLead = value.IsLead, Order = value.Order
+        };
+
+        private static CrewCredit Clone(CrewCredit value) => new()
+        {
+            RoleId = value.RoleId, PersonName = value.PersonName, Department = value.Department, Order = value.Order
+        };
+
+        private static ArtworkAsset Clone(ArtworkAsset value) => new()
+        {
+            Data = value.Data?.ToArray() ?? Array.Empty<byte>(), MimeType = value.MimeType,
+            Description = value.Description, Role = value.Role, Order = value.Order
+        };
+
+        private static MetadataValue Clone(MetadataValue value) => new()
+        {
+            Kind = value.Kind, Text = value.Text, TextValues = value.TextValues?.ToList() ?? new(),
+            Date = value.Date, Integer = value.Integer, Decimal = value.Decimal, Rating = value.Rating,
+            Boolean = value.Boolean, Images = value.Images?.Select(Clone).ToList() ?? new()
+        };
+
+        /// <summary>Restores defaults after reading old or partially populated JSON.</summary>
+        public void EnsureInitialized()
+        {
+            Work ??= new WorkMetadata();
+            PeopleAndStaff ??= new PeopleAndStaffMetadata();
+            Series ??= new SeriesMetadata();
+            Dates ??= new MetadataDates();
+            Evaluation ??= new EvaluationMetadata();
+            Identifiers ??= new IdentifierMetadata();
+            Acquisition ??= new AcquisitionMetadata();
+            Rights ??= new RightsMetadata();
+            Location ??= new LocationMetadata();
+            Artwork ??= new ArtworkMetadata();
+            CustomFields ??= new Dictionary<string, MetadataValue>(StringComparer.Ordinal);
+
+            Work.AlternateTitles ??= new();
+            Work.Keywords ??= new();
+            Work.Genres ??= new();
+            Work.Subgenres ??= new();
+            Work.Moods ??= new();
+            Work.Themes ??= new();
+            PeopleAndStaff.Cast ??= new();
+            PeopleAndStaff.Crew ??= new();
+            PeopleAndStaff.Artists ??= new();
+            PeopleAndStaff.ProductionCompanies ??= new();
+            PeopleAndStaff.Distributors ??= new();
+            PeopleAndStaff.Publishers ??= new();
+            PeopleAndStaff.Labels ??= new();
+            Evaluation.UserTags ??= new();
+            Artwork.Assets ??= new();
+        }
     }
 
     public sealed class WorkMetadata

@@ -23,7 +23,6 @@ namespace Archivio.Models
 
     internal enum MetadataFieldValueType
     {
-        Status,
         Text,
         MultipleText,
         Date,
@@ -74,6 +73,13 @@ namespace Archivio.Models
 
         /// <summary>将来のカスタム項目と標準項目を識別するためのフラグ。</summary>
         public bool IsCustom { get; init; }
+
+        /// <summary>Compatibility name used by legacy bindings and old save requests.</summary>
+        public string? LegacyPropertyName => ExistingColumnTag;
+
+        /// <summary>Whether a field has a textual value path suitable for filename templates.</summary>
+        public bool CanGenerateFileName => ValueType is not (MetadataFieldValueType.Image or MetadataFieldValueType.ImageCollection)
+            && (!string.IsNullOrWhiteSpace(DetailsBindingPath) || !string.IsNullOrWhiteSpace(ListBindingPath));
     }
 
     internal static class MetadataFieldCatalog
@@ -82,9 +88,6 @@ namespace Archivio.Models
         private static readonly IReadOnlyList<MetadataFieldDefinition> StandardFieldDefinitions =
             Array.AsReadOnly(new MetadataFieldDefinition[]
             {
-                new("file.status", "Col_StatusText", MetadataFieldCategory.File, MetadataFieldValueType.Status,
-                    false, false, true, true, false, "StatusText", ExistingColumnTag: "StatusText", DefaultListWidth: 80)
-                    { IsFilterable = false },
                 new("file.name", "Col_FileName", MetadataFieldCategory.File, MetadataFieldValueType.Text,
                     false, true, true, true, false, "FileName", ExistingColumnTag: "FileName", DefaultListWidth: 220)
                     { IsGlobalSearchable = true },
@@ -355,6 +358,16 @@ namespace Archivio.Models
         internal static bool IsKnownId(string id)
         {
             return !string.IsNullOrWhiteSpace(id) && All.Any(field => field.Id == id);
+        }
+
+        internal static string ResolveId(string value)
+        {
+            if (IsKnownId(value)) return value;
+            var field = All.FirstOrDefault(definition =>
+                string.Equals(definition.DetailsBindingPath, value, StringComparison.Ordinal)
+                || string.Equals(definition.ExistingColumnTag, value, StringComparison.Ordinal)
+                || string.Equals(definition.ListBindingPath, value, StringComparison.Ordinal));
+            return field?.Id ?? value;
         }
 
         internal static bool TryCreateCustomField(

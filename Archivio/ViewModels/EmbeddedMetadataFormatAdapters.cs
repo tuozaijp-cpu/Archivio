@@ -64,17 +64,7 @@ namespace Archivio.ViewModels
 
     internal abstract class EmbeddedMetadataFormatAdapter : IEmbeddedMetadataFormatAdapter
     {
-        private static readonly HashSet<string> StandardFieldIds = new(StringComparer.Ordinal)
-        {
-            "work.title",
-            "credits.participants",
-            "work.comment",
-            "work.category",
-            "identifiers.catalog-number",
-            "publication.publisher",
-            "publication.label",
-            "artwork.cover"
-        };
+        protected virtual MetadataContainerFormat Format => MetadataContainerFormat.Other;
 
         public abstract bool CanHandle(string extension);
 
@@ -193,11 +183,6 @@ namespace Archivio.ViewModels
                 WriteArchivioText(file, "evaluation.rating", document.Evaluation.PersonalRatingRaw ?? string.Empty);
                 isDirty = true;
             }
-
-            if (isDirty)
-            {
-                file.Save();
-            }
         }
 
         public virtual ArchivioMetadataReadResult ReadArchivioMetadata(TagLib.File file)
@@ -218,16 +203,7 @@ namespace Archivio.ViewModels
                 return MetadataFieldCapability.Unsupported;
             }
 
-            if (field.Category == MetadataFieldCategory.Technical
-                || field.Id == "artwork.thumbnail"
-                || field.Category == MetadataFieldCategory.File && field.Id != "file.name")
-            {
-                return MetadataFieldCapability.ReadOnly;
-            }
-
-            return StandardFieldIds.Contains(fieldId)
-                ? MetadataFieldCapability.Native
-                : MetadataFieldCapability.Unsupported;
+            return MetadataFieldSupportCatalog.GetCapability(fieldId, Format);
         }
 
         public virtual MetadataFieldSupport GetFieldSupport(string fieldId)
@@ -288,17 +264,9 @@ namespace Archivio.ViewModels
 
     internal sealed class Mp4MetadataAdapter : EmbeddedMetadataFormatAdapter
     {
+        protected override MetadataContainerFormat Format => MetadataContainerFormat.Mp4;
         private const string ArchivioTagOwner = "com.archivio";
         private const string ArchivioMetadataBoxName = "Metadata";
-
-        private static readonly HashSet<string> ArchivioCustomFieldIds = new(StringComparer.Ordinal)
-        {
-            "work.original-title", "work.subtitle", "work.alternate-titles", "credits.cast",
-            "series.name", "series.season-number", "series.episode-number", "series.episode-title",
-            "series.episode-id", "series.network", "identifiers.archivio-id", "identifiers.source-file-id",
-            "evaluation.view-count", "evaluation.favorite", "evaluation.watched", "evaluation.watched-at",
-            "evaluation.playback-position", "evaluation.resume-position", "evaluation.user-tags"
-        };
 
         public override bool CanHandle(string extension)
         {
@@ -314,9 +282,7 @@ namespace Archivio.ViewModels
                 return MetadataFieldCapability.ReadOnly;
             }
 
-            return GetArchivioFieldName(fieldId) is not null || ArchivioCustomFieldIds.Contains(fieldId) || ArchivioMetadataPayloadMapper.IsPayloadFieldId(fieldId)
-                ? MetadataFieldCapability.ArchivioCustom
-                : base.GetFieldCapability(fieldId);
+            return base.GetFieldCapability(fieldId);
         }
 
         public override ArchivioMetadataReadResult ReadArchivioMetadata(TagLib.File file)
@@ -331,7 +297,6 @@ namespace Archivio.ViewModels
             var appleTag = file.GetTag(TagTypes.Apple, create: true) as TagLib.Mpeg4.AppleTag
                 ?? throw new NotSupportedException("Apple タグを作成できません。");
             appleTag.SetDashBox(ArchivioTagOwner, ArchivioMetadataBoxName, ArchivioMetadataPayloadMapper.Serialize(payload));
-            file.Save();
         }
 
         public override string ReadArchivioText(TagLib.File file, string fieldId)
@@ -355,16 +320,9 @@ namespace Archivio.ViewModels
 
     internal sealed class MatroskaMetadataAdapter : EmbeddedMetadataFormatAdapter
     {
+        protected override MetadataContainerFormat Format => MetadataContainerFormat.Mkv;
         private const string ArchivioMetadataTagName = "ARCHIVIO_METADATA_JSON";
 
-        private static readonly HashSet<string> ArchivioCustomFieldIds = new(StringComparer.Ordinal)
-        {
-            "work.original-title", "work.subtitle", "work.alternate-titles", "credits.cast",
-            "series.name", "series.season-number", "series.episode-number", "series.episode-title",
-            "series.episode-id", "series.network", "identifiers.archivio-id", "identifiers.source-file-id",
-            "evaluation.view-count", "evaluation.favorite", "evaluation.watched", "evaluation.watched-at",
-            "evaluation.playback-position", "evaluation.resume-position", "evaluation.user-tags"
-        };
         public override bool CanHandle(string extension)
         {
             return extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
@@ -378,9 +336,7 @@ namespace Archivio.ViewModels
                 return MetadataFieldCapability.ReadOnly;
             }
 
-            return GetArchivioFieldName(fieldId) is not null || ArchivioCustomFieldIds.Contains(fieldId) || ArchivioMetadataPayloadMapper.IsPayloadFieldId(fieldId)
-                ? MetadataFieldCapability.ArchivioCustom
-                : base.GetFieldCapability(fieldId);
+            return base.GetFieldCapability(fieldId);
         }
 
         public override ArchivioMetadataReadResult ReadArchivioMetadata(TagLib.File file)
@@ -395,7 +351,6 @@ namespace Archivio.ViewModels
             var tag = file.GetTag(TagTypes.Matroska, create: true) as TagLib.Matroska.Tag
                 ?? throw new NotSupportedException("Matroska タグを作成できません。");
             tag.Set(ArchivioMetadataTagName, null, ArchivioMetadataPayloadMapper.Serialize(payload));
-            file.Save();
         }
 
         public override string ReadArchivioText(TagLib.File file, string fieldId)

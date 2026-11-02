@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Reflection;
 using System.Text.Json;
 using Archivio.Models;
 using Archivio.ViewModels;
@@ -21,9 +20,14 @@ internal static class Program
         Directory.CreateDirectory(_root);
         try
         {
+            Run("metadata filename template service", TestMetadataFileNameTemplateService);
+            Run("metadata field format capabilities", TestMetadataFieldFormatCapabilities);
             Run("create isolated media fixtures", CreateFixtures);
+            Run("metadata save verification preserves technical information", TestVerificationPreservesTechnicalInformation);
+            Run("MP4/MKV saves work in direct and backup modes", TestMetadataSaveModes);
             Run("MP4 standard/custom metadata roundtrip", TestMp4RoundTrip);
             Run("MKV standard/custom metadata roundtrip", TestMkvRoundTrip);
+            Run("standard-only saves keep existing payload untouched", TestStandardOnlySaveKeepsPayload);
             Run("other format reads but refuses writes", TestOtherFormatReadOnly);
             Run("multiple cover images roundtrip", TestMultipleImages);
             Run("broken custom payload leaves standard tags readable", TestCorruptCustomPayload);
@@ -31,6 +35,7 @@ internal static class Program
             Run("legacy settings and snapshot migration", TestLegacyMigration);
             Run("display visibility and order settings", TestDisplaySettings);
             Run("unknown field IDs are ignored by the catalog", TestUnknownFieldIds);
+            Run("metadata file commit modes", TestMetadataFileCommitModes);
             Run("external modifications are detected", TestExternalModificationDetection);
             Run("failed save leaves original bytes unchanged", TestFailedSavePreservesOriginal);
         }
@@ -57,6 +62,93 @@ internal static class Program
     private static void TestMp4RoundTrip() => TestContainerRoundTrip("sample.mp4");
     private static void TestMkvRoundTrip() => TestContainerRoundTrip("sample.mkv");
 
+    private static void TestMetadataFieldFormatCapabilities()
+    {
+        Assert(!MetadataFieldCatalog.ListFields.Any(field => field.Id == "file.status"), "status column is still available");
+        var mp4 = EmbeddedMetadataFormatAdapterSelector.Select("sample.mp4");
+        var mkv = EmbeddedMetadataFormatAdapterSelector.Select("sample.mkv");
+        var other = EmbeddedMetadataFormatAdapterSelector.Select("sample.mp3");
+
+        Assert(mp4.GetFieldCapability("work.title") == MetadataFieldCapability.Native, "MP4 standard capability changed");
+        Assert(mkv.GetFieldCapability("work.title") == MetadataFieldCapability.Native, "MKV standard capability changed");
+        Assert(mp4.GetFieldCapability("work.subtitle") == MetadataFieldCapability.ArchivioCustom, "MP4 Archivio capability missing");
+        Assert(mkv.GetFieldCapability("work.subtitle") == MetadataFieldCapability.ArchivioCustom, "MKV Archivio capability missing");
+        Assert(mp4.GetFieldCapability("technical.duration") == MetadataFieldCapability.ReadOnly, "technical field became writable");
+        Assert(other.GetFieldSupport("work.title").CanRead && !other.GetFieldSupport("work.title").CanWrite, "other format write policy changed");
+        Assert(other.GetFieldSupport("work.subtitle").Capability == MetadataFieldCapability.Unsupported, "other format accepted Archivio field");
+        Assert(other.GetFieldCapability("unknown.future-id") == MetadataFieldCapability.Unsupported, "unknown ID was not rejected");
+    }
+
+    private static void TestVerificationPreservesTechnicalInformation()
+    {
+        var path = CopyFixture("sample.mp4");
+        var technicalInfo = new VideoTechnicalInfo
+        {
+            Duration = TimeSpan.FromSeconds(42),
+            TotalBitrate = 1_234_000,
+            VideoStreams =
+            [
+                new VideoStreamInfo { Width = 1920, Height = 1080, Codec = "h264" }
+            ],
+            AudioStreams =
+            [
+                new AudioStreamInfo { SampleRate = 48000, Codec = "aac" }
+            ]
+        };
+        var expected = new VideoMetadataSnapshot
+        {
+            Duration = "00:00:42",
+            FrameWidth = "1920",
+            FrameHeight = "1080",
+            FrameRate = "29.97",
+            VideoBitrate = "1.2 Mbps",
+            VideoCompression = "H.264",
+            AudioSampleRate = "48 kHz",
+            AudioBitrate = "192 kbps",
+            AudioFormat = "AAC",
+            Technical = new VideoTechnicalMetadata { FrameWidth = 1920, FrameHeight = 1080 },
+            TechnicalInfo = technicalInfo
+        };
+        var actual = MetadataVerificationService.VerifyAndRead(
+            path,
+            EmbeddedMetadataFormatAdapterSelector.Select(path),
+            expected,
+            Array.Empty<string>(),
+            null);
+
+        Assert(actual.Duration == expected.Duration, "duration was cleared by save verification");
+        Assert(actual.FrameWidth == expected.FrameWidth && actual.FrameHeight == expected.FrameHeight, "video dimensions were cleared by save verification");
+        Assert(actual.FrameRate == expected.FrameRate && actual.VideoBitrate == expected.VideoBitrate, "video technical data was cleared by save verification");
+        Assert(actual.AudioSampleRate == expected.AudioSampleRate && actual.AudioBitrate == expected.AudioBitrate, "audio technical data was cleared by save verification");
+        Assert(actual.AudioFormat == expected.AudioFormat && actual.TechnicalInfo.PrimaryVideo?.Codec == "h264", "technical stream information was not preserved");
+    }
+
+    private static void TestMetadataFileNameTemplateService()
+    {
+        var item = new VideoFileItem("video.mp4");
+        item.StructuredMetadata.Work.Title = "Title: one";
+        item.StructuredMetadata.Work.Subtitle = "Subtitle";
+        item.StructuredMetadata.PeopleAndStaff.Cast = new()
+        {
+            new CastCredit { PersonName = "Actor", CharacterName = "Role", IsLead = true, Order = 0 },
+            new CastCredit { PersonName = "Second", Order = 1 }
+        };
+        item.StructuredMetadata.Dates.ReleaseDate = new DateTimeOffset(2024, 2, 3, 0, 0, 0, TimeSpan.Zero);
+        MetadataFieldCatalog.RefreshCustomFields(new[]
+        {
+            new CustomMetadataFieldDefinition { Id = "custom.filename-test", DisplayName = "Filename test", ValueType = "Text", Category = "Work", IsEditable = true }
+        });
+        item.StructuredMetadata.CustomFields["custom.filename-test"] = new MetadataValue { Text = "custom value" };
+
+        var service = new MetadataFileNameTemplateService();
+        Assert(service.Build(item, @"\work.title").FileName == "Title_ one.mp4", "basic filename value was not sanitized");
+        Assert(service.Build(item, @"[\credits.cast.0][\credits.cast.1]").FileName == "[Actor][Second].mp4", "multiple cast values failed");
+        Assert(service.Build(item, @"{work.subtitle}-[{\credits.cast.0.character}]").FileName == "Subtitle-[Role].mp4", "brace syntax or role failed");
+        Assert(service.Build(item, @"\custom.filename-test-\dates.release").FileName == "custom value-2024-02-03.mp4", "custom/date value failed");
+        Assert(service.Build(item, @"\unknown.id").InvalidIds.Contains("unknown.id"), "unknown ID was not reported");
+        Assert(service.Build(item, @"\タイトル-\品番").FileName == "Title_ one-.mp4", "compatibility aliases failed");
+    }
+
     private static void TestContainerRoundTrip(string fixtureName)
     {
         var path = CopyFixture(fixtureName);
@@ -76,7 +168,7 @@ internal static class Program
         var storageFile = GetStorageFile(path);
         var store = new EmbeddedVideoMetadataStore();
         var before = store.LoadAsync(storageFile).GetAwaiter().GetResult().Metadata;
-        var snapshot = before;
+        var snapshot = MetadataDocumentMapper.ToSnapshot(MetadataDocumentMapper.FromSnapshot(before));
         snapshot.Title = "Archivio roundtrip 漢字";
         snapshot.Comment = "line one\r\nline two — ✓";
         snapshot.StructuredMetadata.Work.OriginalTitle = "Original title";
@@ -109,6 +201,126 @@ internal static class Program
         Assert(after.StructuredMetadata.CustomFields["custom.test-note"].Text == "custom value", "custom value missing");
         using var check = TagLib.File.Create(path);
         Assert(check.Tag.Album == "Preserved album tag", "unrelated standard tag was damaged");
+    }
+
+    private static void TestMetadataSaveModes()
+    {
+        foreach (var fixture in new[] { "sample.mp4", "sample.mkv" })
+        {
+            foreach (var directWrite in new[] { false, true })
+            {
+                var path = CopyFixture(fixture);
+                var adapter = EmbeddedMetadataFormatAdapterSelector.Select(path);
+                using (var media = TagLib.File.Create(path))
+                {
+                    media.Tag.Album = "Preserved album tag";
+                    var document = adapter.ReadMetadataDocument(media);
+                    document.Work.Subtitle = "Keep this existing payload";
+                    adapter.WriteArchivioMetadata(media, ArchivioMetadataPayloadMapper.FromDocument(document));
+                    media.Save();
+                }
+
+                VideoMetadataSnapshot before;
+                string payloadBefore;
+                using (var media = TagLib.File.Create(path))
+                {
+                    var document = adapter.ReadMetadataDocument(media);
+                    var payload = adapter.ReadArchivioMetadata(media).Payload
+                        ?? throw new InvalidOperationException($"{fixture}: initial payload was missing");
+                    ArchivioMetadataPayloadMapper.ApplyToDocument(document, payload);
+                    before = MetadataDocumentMapper.ToSnapshot(document);
+                    payloadBefore = ArchivioMetadataPayloadMapper.Serialize(payload);
+                }
+
+                var updated = MetadataDocumentMapper.ToSnapshot(before.StructuredMetadata.Clone());
+                updated.Title = $"Saved in {(directWrite ? "direct" : "backup")} mode";
+                var result = MetadataSaveCoordinator.ExecuteAsync(
+                    path,
+                    updated,
+                    before,
+                    new[] { "Title" },
+                    directWrite).GetAwaiter().GetResult();
+                Assert(result.Succeeded, $"{fixture}, direct={directWrite}: {result.Details}");
+
+                using var saved = TagLib.File.Create(path);
+                Assert(saved.Tag.Title == updated.Title, $"{fixture}, direct={directWrite}: title was not saved");
+                Assert(saved.Tag.Album == "Preserved album tag", $"{fixture}, direct={directWrite}: unrelated tag was damaged");
+                var savedPayload = adapter.ReadArchivioMetadata(saved).Payload
+                    ?? throw new InvalidOperationException($"{fixture}, direct={directWrite}: payload was lost");
+                Assert(
+                    ArchivioMetadataPayloadMapper.Serialize(savedPayload) == payloadBefore,
+                    $"{fixture}, direct={directWrite}: unchanged custom payload was altered");
+            }
+        }
+    }
+
+    private static void TestStandardOnlySaveKeepsPayload()
+    {
+        foreach (var fixture in new[] { "sample.mp4", "sample.mkv" })
+        {
+            var path = CopyFixture(fixture);
+            var adapter = EmbeddedMetadataFormatAdapterSelector.Select(path);
+            var initial = new VideoMetadataSnapshot();
+            initial.StructuredMetadata.Work.Subtitle = "Keep this payload value";
+            initial.StructuredMetadata.PeopleAndStaff.Cast =
+            [
+                new CastCredit { PersonName = "Actor One", CharacterName = "Hero", IsLead = true, Order = 0 }
+            ];
+            var createPayload = MetadataWriteExecutor.Execute(path, adapter, initial, new[] { "work.subtitle" });
+            Assert(createPayload.Errors.Count == 0, $"{fixture}: initial payload save failed: {string.Join("; ", createPayload.Errors)}");
+
+            string ReadPayload()
+            {
+                using var media = TagLib.File.Create(path);
+                var result = adapter.ReadArchivioMetadata(media);
+                Assert(result.Payload is not null, $"{fixture}: Archivio payload was missing");
+                return JsonSerializer.Serialize(result.Payload);
+            }
+
+            VideoMetadataSnapshot ReadSnapshot()
+            {
+                using var media = TagLib.File.Create(path);
+                var document = adapter.ReadMetadataDocument(media);
+                var result = adapter.ReadArchivioMetadata(media);
+                if (result.Payload is not null)
+                {
+                    ArchivioMetadataPayloadMapper.ApplyToDocument(document, result.Payload);
+                }
+                return MetadataDocumentMapper.ToSnapshot(document);
+            }
+
+            var unchangedSnapshot = ReadSnapshot();
+            var unchangedBytes = IoFile.ReadAllBytes(path);
+            var unchangedSave = MetadataWriteExecutor.Execute(
+                path,
+                adapter,
+                unchangedSnapshot,
+                new[] { "work.subtitle" });
+            Assert(unchangedSave.Errors.Count == 0, $"{fixture}: unchanged payload save failed");
+            Assert(unchangedSave.Payload is null, $"{fixture}: unchanged payload was marked for verification");
+            Assert(unchangedBytes.SequenceEqual(IoFile.ReadAllBytes(path)), $"{fixture}: unchanged payload rewrote the media file");
+
+            var originalPayload = ReadPayload();
+            var original = ReadSnapshot();
+            var changed = MetadataDocumentMapper.ToSnapshot(MetadataDocumentMapper.FromSnapshot(original));
+            changed.Title = "Updated native title";
+            var save = MetadataWriteExecutor.Execute(path, adapter, changed, new[] { "Title" });
+            Assert(save.Errors.Count == 0, $"{fixture}: standard-only save failed: {string.Join("; ", save.Errors)}");
+            Assert(ReadPayload() == originalPayload, $"{fixture}: standard-only save rewrote the Archivio payload");
+
+            var reloaded = ReadSnapshot();
+            Assert(reloaded.Title == changed.Title, $"{fixture}: native title did not override the unchanged payload");
+            Assert(reloaded.StructuredMetadata.Work.Subtitle == "Keep this payload value", $"{fixture}: unchanged payload metadata was lost");
+            Assert(reloaded.StructuredMetadata.PeopleAndStaff.Cast.Single().CharacterName == "Hero", $"{fixture}: unchanged cast details were lost");
+
+            var clearParticipants = MetadataDocumentMapper.ToSnapshot(MetadataDocumentMapper.FromSnapshot(reloaded));
+            clearParticipants.Participants = string.Empty;
+            var clear = MetadataWriteExecutor.Execute(path, adapter, clearParticipants, new[] { "Participants" });
+            Assert(clear.Errors.Count == 0, $"{fixture}: clearing participants failed: {string.Join("; ", clear.Errors)}");
+            var cleared = ReadSnapshot();
+            Assert(cleared.Participants.Length == 0, $"{fixture}: cleared native participants reappeared from the old payload");
+            Assert(cleared.StructuredMetadata.PeopleAndStaff.Cast.Count == 0, $"{fixture}: cleared cast remained in the payload");
+        }
     }
 
     private static void TestOtherFormatReadOnly()
@@ -223,39 +435,82 @@ internal static class Program
         Assert(settings.VisibleDetailFieldIds!.SequenceEqual(new[] { "artwork.cover" }), "visible detail IDs were not normalized");
     }
 
+    private static void TestMetadataFileCommitModes()
+    {
+        var backupPath = CopyFixture("sample.mp4");
+        var originalBytes = IoFile.ReadAllBytes(backupPath);
+        string temporaryPath;
+        using (var commit = FileCommitService.Open(backupPath, directWrite: false))
+        {
+            temporaryPath = commit.WorkingPath;
+            Assert(!commit.IsDirectWrite && temporaryPath != backupPath, "backup mode did not create a working copy");
+            Assert(originalBytes.SequenceEqual(IoFile.ReadAllBytes(temporaryPath)), "working copy differs from original");
+            IoFile.AppendAllText(temporaryPath, "metadata update");
+            Assert(originalBytes.SequenceEqual(IoFile.ReadAllBytes(backupPath)), "backup mode modified the original before commit");
+            commit.Commit();
+        }
+        Assert(!IoFile.Exists(temporaryPath), "committed working copy was not moved into place");
+        Assert(!originalBytes.SequenceEqual(IoFile.ReadAllBytes(backupPath)), "backup mode did not commit the working copy");
+
+        var directPath = CopyFixture("sample.mp4");
+        using (var commit = FileCommitService.Open(directPath, directWrite: true))
+        {
+            Assert(commit.IsDirectWrite && commit.WorkingPath == directPath, "direct mode did not target the original file");
+            IoFile.AppendAllText(commit.WorkingPath, "direct metadata update");
+            commit.Commit();
+        }
+        Assert(
+            IoFile.ReadAllBytes(directPath).AsSpan().EndsWith("direct metadata update"u8),
+            "direct mode changes were not retained");
+    }
+
     private static void TestExternalModificationDetection()
     {
         var path = CopyFixture("sample.mp4");
-        var storeType = typeof(EmbeddedVideoMetadataStore);
-        var versionType = storeType.GetNestedType("FileVersion", BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("file version type not found");
-        var readVersion = storeType.GetMethod("ReadFileVersion", BindingFlags.NonPublic | BindingFlags.Static)!;
-        var ensureUnchanged = storeType.GetMethod("EnsureFileUnchanged", BindingFlags.NonPublic | BindingFlags.Static)!;
-        var expected = readVersion.Invoke(null, new object[] { path })!;
+        var commit = FileCommitService.Open(path, directWrite: false);
+        var temporaryPath = commit.WorkingPath;
+        var externalUpdate = IoFile.ReadAllBytes(path).Concat("external update"u8.ToArray()).ToArray();
         IoFile.AppendAllText(path, "external update");
         try
         {
-            ensureUnchanged.Invoke(null, new[] { (object)path, expected });
+            commit.Commit();
             throw new InvalidOperationException("external change was not detected");
         }
-        catch (TargetInvocationException ex) when (ex.InnerException is InvalidOperationException)
+        catch (InvalidOperationException ex) when (ex.Message.Contains("外部", StringComparison.Ordinal))
         {
-            Assert(ex.InnerException.Message.Contains("外部", StringComparison.Ordinal), "wrong external-change error");
+            Assert(ex.Message.Contains("外部", StringComparison.Ordinal), "wrong external-change error");
         }
-        Assert(versionType.IsInstanceOfType(expected), "version snapshot had unexpected type");
+        finally
+        {
+            commit.Dispose();
+        }
+        Assert(externalUpdate.SequenceEqual(IoFile.ReadAllBytes(path)), "external changes were overwritten");
+        Assert(!IoFile.Exists(temporaryPath), "uncommitted working copy was not removed");
     }
 
     private static void TestFailedSavePreservesOriginal()
     {
-        var path = CopyFixture("sample.mp4");
-        var beforeBytes = IoFile.ReadAllBytes(path);
-        var file = GetStorageFile(path);
-        var store = new EmbeddedVideoMetadataStore();
-        var before = store.LoadAsync(file).GetAwaiter().GetResult().Metadata;
-        before.StructuredMetadata.CustomFields["custom.oversize"] = new MetadataValue { Kind = MetadataValueKind.Text, Text = new string('x', 70 * 1024) };
-        var result = store.SaveAsync(file, before, before, new[] { "custom.oversize" }).GetAwaiter().GetResult();
-        Assert(!result.Succeeded, "oversize payload unexpectedly saved");
-        Assert(beforeBytes.SequenceEqual(IoFile.ReadAllBytes(path)), "failed transaction changed the source file");
+        MetadataFieldCatalog.RefreshCustomFields(new[]
+        {
+            new CustomMetadataFieldDefinition { Id = "custom.oversize", DisplayName = "Oversize", ValueType = "Text", Category = "Work", IsEditable = true }
+        });
+
+        foreach (var directWrite in new[] { false, true })
+        {
+            var path = CopyFixture("sample.mp4");
+            var beforeBytes = IoFile.ReadAllBytes(path);
+            var before = new VideoMetadataSnapshot();
+            before.StructuredMetadata.CustomFields["custom.oversize"] =
+                new MetadataValue { Kind = MetadataValueKind.Text, Text = new string('x', 70 * 1024) };
+            var result = MetadataSaveCoordinator.ExecuteAsync(
+                path,
+                before,
+                before,
+                new[] { "custom.oversize" },
+                directWrite).GetAwaiter().GetResult();
+            Assert(!result.Succeeded, $"direct={directWrite}: oversize payload unexpectedly saved");
+            Assert(beforeBytes.SequenceEqual(IoFile.ReadAllBytes(path)), $"direct={directWrite}: failed transaction changed the source file");
+        }
     }
 
     private static string CopyFixture(string name)

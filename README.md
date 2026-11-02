@@ -34,7 +34,7 @@ Archivio is a Windows video metadata manager built with WinUI 3 (Windows App SDK
 Right-click a file in the video list and choose **Generate filename from tags**. The template is saved in the application settings and reused on subsequent operations. The default template is:
 
 ```text
-[{credits.cast.0}]{work.title}[{identifiers.catalog-number}]
+[\credits.cast.0]\work.title[\identifiers.catalog-number]
 ```
 
 For a first cast member of `Taro Yamada`, a title of `Northern Country`, and catalog number `MMA-001`, the result is:
@@ -49,10 +49,10 @@ Cast-specific forms include `credits.cast.0` (person name), `credits.cast.0.char
 
 Template syntax:
 
-* `{work.title}` replaces the ID and does not output the braces.
-* `\\work.title` replaces the ID without outputting a wrapper symbol.
-* `[\\credits.cast.0]` keeps the square brackets as literal characters and replaces the escaped ID inside them.
-* `{\\credits.cast.0}` keeps the curly braces as literal characters and replaces the escaped ID inside them.
+* `\work.title`: the backslash marks the following text as an ID; the backslash itself is not output.
+* `[\credits.cast.0]`: square brackets are ordinary literal characters and the escaped ID inside them is replaced.
+* `{work.title}`: shorthand ID syntax; the ID is replaced and the curly braces are not output.
+* `{\work.title}`: curly braces are kept as literal characters and the escaped ID inside them is replaced.
 
 The compatibility aliases `出演者0`, `タイトル`, and `品番` are also accepted. The default template uses stable IDs so it is not tied to display names.
 
@@ -171,7 +171,7 @@ Archivioは無料で利用できます。もしArchivioがお役に立ちまし�
 ファイル一覧で対象ファイルを右クリックし、「タグからファイル名を生成」を選択します。テンプレートは設定ファイルに保存され、次回以降も利用できます。既定値は次のとおりです。
 
 ```text
-[{credits.cast.0}]{work.title}[{identifiers.catalog-number}]
+[\credits.cast.0]\work.title[\identifiers.catalog-number]
 ```
 
 出演者が「山田太郎」、タイトルが「北の国から」、品番が「MMA-001」の場合、次のようになります。
@@ -201,14 +201,33 @@ Archivioは無料で利用できます。もしArchivioがお役に立ちまし�
 
 記法は次のとおりです。
 
-* `{work.title}`：IDを置換し、`{}`は出力しません。
-* `\\work.title`：IDを置換し、記号は出力しません。
-* `[\\credits.cast.0]`：`[]`を通常の記号として残し、内部のIDを置換します。
-* `{\\credits.cast.0}`：`{}`を通常の記号として残し、内部のIDを置換します。
+* `\work.title`：`\`の後ろをIDとして置換し、`\`自体は出力しません。
+* `[\credits.cast.0]`：`[]`は通常の記号として残し、内部のIDを置換します。
+* `{work.title}`：IDを置換する短縮記法で、`{}`は出力しません。
+* `{\work.title}`：`{}`を通常の記号として残し、内部のIDを置換します。
 
 値が空の項目は空文字として置換されます。画像のように文字列値を持たない項目は安全のため空文字になります。Windowsのファイル名に使用できない文字は `_` に置換され、元の拡張子は維持されます。
 
 互換入力として、`出演者0`、`タイトル`、`品番`も使用できます。ただし、保存される既定テンプレートでは将来変更されない安定IDを使用します。
+
+### 管理可能なタグ項目と読み取り専用項目
+
+Archivioは動画ファイルを正本として、MP4／MKVの標準タグとArchivio独自タグを管理します。詳細画面で編集できる主な項目は次のとおりです。
+
+| 分類 | 管理項目 |
+| --- | --- |
+| 作品情報 | タイトル、サブタイトル、原題、別名・別タイトル、説明、あらすじ、コメント、キーワード、ジャンル、コンテンツ種別 |
+| 人物・スタッフ | 出演者、役名、主演、監督などのスタッフ、制作会社・スタジオ、配給会社、発行元・出版社 |
+| シリーズ | シリーズ名、シーズン番号、エピソード番号、エピソードタイトル、エピソードID、シーズン／エピソード総数、公開年、パート番号 |
+| 日付 | 発売日、録画日、撮影日、購入日、Archivio登録日時、Archivio最終更新日時 |
+| 評価・視聴 | 評価、年齢区分、視聴回数、お気に入り、視聴済み、視聴日、最終再生日時、再生位置、個人メモ、ユーザー独自タグ |
+| 識別・入手 | 品番、バーコード、IMDb／TMDB／TVDB ID、購入価格、通貨、購入先、購入URL、入手元、原媒体 |
+| 権利・場所 | 著作権者、ライセンス、出典、撮影場所、国 |
+| 画像 | カバー画像、ポスター、バナー、サムネイル、複数画像 |
+
+動画コーデック、解像度、フレームレート、ビットレート、HDR、色域、ストリーム情報、音声コーデック、サンプルレート、チャンネル数などの技術情報は取得専用で、一覧と詳細画面に表示します。これらはタグ保存の編集対象ではありません。
+
+MP4／MKV以外の形式は読み取り可能な情報のみ扱い、書き込みできない項目は保存対象から除外します。標準タグやArchivio独自タグの保存可否はコンテナとタグ仕様に依存するため、保存後は再読み込みして確認してください。
 
 ---
 

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using Archivio.Models;
@@ -20,6 +21,7 @@ namespace Archivio.ViewModels
         internal static ArchivioMetadataPayload FromDocument(MetadataDocument document)
         {
             ArgumentNullException.ThrowIfNull(document);
+            document.EnsureInitialized();
             return new ArchivioMetadataPayload
             {
                 SchemaVersion = "2",
@@ -46,9 +48,15 @@ namespace Archivio.ViewModels
         {
             ArgumentNullException.ThrowIfNull(document);
             ArgumentNullException.ThrowIfNull(payload);
+            document.EnsureInitialized();
             document.SchemaVersion = string.IsNullOrWhiteSpace(payload.SchemaVersion) ? "1" : payload.SchemaVersion;
             if (payload.SchemaVersion == "2")
             {
+                var nativeWork = document.Work;
+                var nativePeopleAndStaff = document.PeopleAndStaff;
+                var nativeDates = document.Dates;
+                var nativeEvaluation = document.Evaluation;
+                var nativeIdentifiers = document.Identifiers;
                 document.Work = payload.Work ?? new WorkMetadata();
                 document.PeopleAndStaff = payload.PeopleAndStaff ?? new PeopleAndStaffMetadata();
                 document.Dates = payload.Dates ?? new MetadataDates();
@@ -58,6 +66,24 @@ namespace Archivio.ViewModels
                 document.Location = payload.Location ?? new LocationMetadata();
                 document.Evaluation = payload.Evaluation ?? new EvaluationMetadata();
                 document.CustomFields = payload.CustomFields ?? new(StringComparer.Ordinal);
+
+                document.Work.Title = nativeWork.Title;
+                document.Work.Comment = nativeWork.Comment;
+                document.Work.Genres = nativeWork.Genres;
+                document.Identifiers.CatalogNumber = nativeIdentifiers.CatalogNumber;
+                document.PeopleAndStaff.Publishers = nativePeopleAndStaff.Publishers;
+                document.PeopleAndStaff.Distributors = nativePeopleAndStaff.Distributors;
+                if (nativePeopleAndStaff.Cast.Count > 0)
+                {
+                    document.PeopleAndStaff.Cast = MetadataDocumentMapper.MergeCastCredits(
+                        nativePeopleAndStaff.Cast
+                            .OrderBy(credit => credit.Order)
+                            .Select(credit => credit.PersonName),
+                        document.PeopleAndStaff.Cast);
+                }
+                document.Dates.ReleaseDate = nativeDates.ReleaseDate;
+                document.Evaluation.PersonalRating = nativeEvaluation.PersonalRating;
+                document.Evaluation.PersonalRatingRaw = nativeEvaluation.PersonalRatingRaw;
                 return;
             }
             document.Work.OriginalTitle = payload.OriginalTitle ?? string.Empty;
@@ -148,24 +174,6 @@ namespace Archivio.ViewModels
         }
 
         internal static bool IsPayloadFieldId(string fieldId)
-        {
-            return fieldId is "work.title" or "work.subtitle" or "work.original-title" or "work.alternate-titles"
-                or "work.description" or "work.synopsis" or "work.keywords" or "work.genres" or "work.content-type"
-                or "credits.cast" or "series.name" or "series.season-number" or "series.episode-number"
-                or "series.episode-title" or "series.episode-id" or "series.network"
-                or "credits.crew" or "credits.production-companies" or "credits.distributors" or "credits.publishers"
-                or "series.season-count" or "series.episode-count" or "series.publication-year" or "series.part-number"
-                or "dates.release" or "dates.recording" or "dates.filming" or "dates.purchased" or "dates.archivio-registered" or "dates.archivio-updated"
-                or "evaluation.content-rating" or "evaluation.personal-notes"
-                or "identifiers.barcode" or "identifiers.imdb" or "identifiers.tmdb" or "identifiers.tvdb"
-                or "acquisition.price" or "acquisition.currency" or "acquisition.seller" or "acquisition.url" or "acquisition.source" or "acquisition.original-media"
-                or "rights.copyright-holder" or "rights.license" or "rights.source"
-                or "location.filming" or "location.country"
-                or "identifiers.archivio-id" or "identifiers.source-file-id"
-                or "evaluation.view-count" or "evaluation.favorite" or "evaluation.watched"
-                or "evaluation.watched-at" or "evaluation.playback-position"
-                or "evaluation.resume-position" or "evaluation.user-tags"
-                || fieldId.StartsWith("custom.", StringComparison.Ordinal);
-        }
+            => MetadataFieldIds.IsArchivioPayloadId(fieldId);
     }
 }

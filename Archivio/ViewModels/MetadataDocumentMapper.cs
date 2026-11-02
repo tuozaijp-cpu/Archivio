@@ -34,20 +34,16 @@ namespace Archivio.ViewModels
             ArgumentNullException.ThrowIfNull(snapshot);
             // 埋め込みArchivioペイロードを読み込んだスナップショットでは、独自項目を保持したまま
             // 画面互換用の標準項目だけを更新する。
-            var document = snapshot.StructuredMetadata ?? new MetadataDocument();
-            document.Work ??= new WorkMetadata();
-            document.PeopleAndStaff ??= new PeopleAndStaffMetadata();
-            document.Series ??= new SeriesMetadata();
-            document.Dates ??= new MetadataDates();
-            document.Evaluation ??= new EvaluationMetadata();
-            document.Identifiers ??= new IdentifierMetadata();
-            document.CustomFields ??= new Dictionary<string, MetadataValue>(StringComparer.Ordinal);
+            // Never mutate the snapshot's document. A snapshot is a boundary between
+            // the file model and the UI model, not a shared editing object.
+            var document = snapshot.StructuredMetadata?.Clone() ?? new MetadataDocument();
+            document.EnsureInitialized();
             document.Work.Title = snapshot.Title ?? string.Empty;
             document.Work.Comment = snapshot.Comment ?? string.Empty;
             document.Work.Genres = SplitValues(snapshot.Category);
-            document.PeopleAndStaff.Cast = SplitValues(snapshot.Participants)
-                .Select((name, index) => new CastCredit { PersonName = name, Order = index })
-                .ToList();
+            document.PeopleAndStaff.Cast = MergeCastCredits(
+                SplitValues(snapshot.Participants),
+                document.PeopleAndStaff.Cast);
             document.Identifiers.CatalogNumber = snapshot.CatalogNumber ?? string.Empty;
             document.PeopleAndStaff.Publishers = SplitValues(snapshot.Publisher);
             document.PeopleAndStaff.Distributors = SplitValues(snapshot.ContentDistributor);
@@ -60,6 +56,7 @@ namespace Archivio.ViewModels
         public static VideoMetadataSnapshot ToSnapshot(MetadataDocument document)
         {
             ArgumentNullException.ThrowIfNull(document);
+            document.EnsureInitialized();
             var releaseDate = document.Dates.ReleaseDate ??
                 new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
             var rating = !string.IsNullOrWhiteSpace(document.Evaluation.PersonalRatingRaw)
@@ -83,7 +80,7 @@ namespace Archivio.ViewModels
                 ReleaseDateText = releaseDate.Year > 1900
                     ? releaseDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
                     : string.Empty,
-                StructuredMetadata = document
+                StructuredMetadata = document.Clone()
             };
         }
 
@@ -100,7 +97,7 @@ namespace Archivio.ViewModels
             item.Publisher = snapshot.Publisher;
             item.Comment = snapshot.Comment;
             item.ReleaseDate = snapshot.ReleaseDate;
-            item.StructuredMetadata = document;
+            item.StructuredMetadata = document.Clone();
         }
 
         private static int? ParseRating(string? value)
@@ -108,6 +105,44 @@ namespace Archivio.ViewModels
             return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rating)
                 ? rating
                 : null;
+        }
+
+        internal static List<CastCredit> MergeCastCredits(
+            IEnumerable<string> participants,
+            IEnumerable<CastCredit> existingCredits)
+        {
+            var participantList = participants.ToList();
+            if (participantList.Count == 0)
+            {
+                return existingCredits.ToList();
+            }
+
+            var creditsByName = existingCredits
+                .Where(credit => !string.IsNullOrWhiteSpace(credit.PersonName))
+                .GroupBy(credit => credit.PersonName.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => new Queue<CastCredit>(group.OrderBy(credit => credit.Order)),
+                    StringComparer.OrdinalIgnoreCase);
+
+            return participantList
+                .Select((name, index) =>
+                {
+                    if (creditsByName.TryGetValue(name, out var matchingCredits) && matchingCredits.Count > 0)
+                    {
+                        var existing = matchingCredits.Dequeue();
+                        return new CastCredit
+                        {
+                            PersonName = name,
+                            CharacterName = existing.CharacterName,
+                            IsLead = existing.IsLead,
+                            Order = index
+                        };
+                    }
+
+                    return new CastCredit { PersonName = name, Order = index };
+                })
+                .ToList();
         }
 
         private static List<string> SplitValues(string? value)

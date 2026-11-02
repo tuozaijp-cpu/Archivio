@@ -17,6 +17,7 @@ namespace Archivio.Models
     {
         private readonly HashSet<string> _dirtyCustomMetadataFieldIds = new(StringComparer.Ordinal);
         private string _originalStructuredMetadataJson = string.Empty;
+        private MetadataDocument _originalStructuredMetadata = new();
         private MetadataDocument _structuredMetadata = new();
 
         /// <summary>動画ファイルから読み込んだArchivio共通メタデータ。既存プロパティとの互換用に併存する。</summary>
@@ -154,8 +155,6 @@ namespace Archivio.Models
         private bool _isApplyingInitialValues;
         private bool _isLoaded;
         private bool _isCoverArtLoaded;
-        private bool _isSaving;
-        private bool _saveFailed;
         private bool _isCoverArtDirty;
         private bool _isThumbnailLoading;
         private bool _thumbnailLoadFailed;
@@ -266,10 +265,32 @@ namespace Archivio.Models
                 Rating = _rating,
                 ContentDistributor = _contentDistributor,
                 Publisher = _publisher,
+                Duration = Duration,
+                FrameWidth = FrameWidth,
+                FrameHeight = FrameHeight,
+                FrameRate = FrameRate,
+                VideoBitrate = VideoBitrate,
+                VideoCompression = VideoCompression,
+                AudioSampleRate = AudioSampleRate,
+                AudioBitrate = AudioBitrate,
+                AudioFormat = AudioFormat,
                 Comment = _comment,
                 ReleaseDateText = _releaseDateText,
                 ReleaseDate = _releaseDate,
-                StructuredMetadata = StructuredMetadata
+                Technical = new VideoTechnicalMetadata
+                {
+                    Duration = TechnicalInfo.Duration ?? DurationValue,
+                    FrameWidth = TechnicalInfo.PrimaryVideo?.Width,
+                    FrameHeight = TechnicalInfo.PrimaryVideo?.Height,
+                    FrameRate = TechnicalInfo.PrimaryVideo?.FrameRate,
+                    VideoBitrate = TechnicalInfo.PrimaryVideo?.Bitrate,
+                    VideoCodec = TechnicalInfo.PrimaryVideo?.Codec ?? VideoCompression,
+                    AudioSampleRate = TechnicalInfo.PrimaryAudio?.SampleRate,
+                    AudioBitrate = TechnicalInfo.PrimaryAudio?.Bitrate,
+                    AudioCodec = TechnicalInfo.PrimaryAudio?.Codec ?? AudioFormat
+                },
+                TechnicalInfo = TechnicalInfo,
+                StructuredMetadata = StructuredMetadata.Clone()
             };
         }
 
@@ -289,7 +310,7 @@ namespace Archivio.Models
                 ReleaseDate = DateTimeOffset.TryParse(_originalValues.TryGetValue(nameof(ReleaseDate), out var releaseDateValue) ? releaseDateValue : _releaseDateText, out var parsedDate)
                     ? parsedDate
                     : _releaseDate,
-                StructuredMetadata = StructuredMetadata
+                StructuredMetadata = _originalStructuredMetadata.Clone()
             };
         }
 
@@ -648,35 +669,6 @@ namespace Archivio.Models
             set => _coverArtImages = value;
         }
 
-        public bool IsSaving
-        {
-            get => _isSaving;
-            set
-            {
-                if (SetProperty(ref _isSaving, value))
-                {
-                    if (value)
-                    {
-                        SaveFailed = false;
-                    }
-
-                    OnPropertyChanged(nameof(StatusText));
-                }
-            }
-        }
-
-        public bool SaveFailed
-        {
-            get => _saveFailed;
-            set
-            {
-                if (SetProperty(ref _saveFailed, value))
-                {
-                    OnPropertyChanged(nameof(StatusText));
-                }
-            }
-        }
-
         public bool IsCoverArtDirty
         {
             get => _isCoverArtDirty;
@@ -692,24 +684,7 @@ namespace Archivio.Models
         public bool IsDeleted
         {
             get => _isDeleted;
-            set
-            {
-                if (SetProperty(ref _isDeleted, value))
-                {
-                    OnPropertyChanged(nameof(StatusText));
-                }
-            }
-        }
-
-        public string StatusText
-        {
-            get
-            {
-                if (IsDeleted) return LanguageManager.GetString("Status_Deleted");
-                if (IsSaving) return LanguageManager.GetString("Status_Saving");
-                if (SaveFailed) return LanguageManager.GetString("Status_Failed");
-                return string.Empty;
-            }
+            set => SetProperty(ref _isDeleted, value);
         }
 
         public bool IsImageControlsEnabled => HasCoverArt && SelectedCoverArtIndex >= 0 && SelectedCoverArtIndex < CoverArts.Count;
@@ -744,16 +719,9 @@ namespace Archivio.Models
         public bool HasMetadataChanges()
         {
             return _dirtyCustomMetadataFieldIds.Count > 0
-                || !string.Equals(_originalStructuredMetadataJson, SerializeStructuredMetadata(StructuredMetadata), StringComparison.Ordinal)
-                || HasChanges(nameof(Title))
-                || HasChanges(nameof(Participants))
-                || HasChanges(nameof(Category))
-                || HasChanges(nameof(Comment))
-                || HasChanges(nameof(CatalogNumber))
-                || HasChanges(nameof(Rating))
-                || HasChanges(nameof(ContentDistributor))
-                || HasChanges(nameof(Publisher))
-                || HasChanges(nameof(ReleaseDate));
+                || !MetadataChangeComparer.AreEquivalent(
+                    CreateCurrentMetadataSnapshot(),
+                    CreateOriginalMetadataSnapshot());
         }
 
         public bool HasPendingChanges => HasMetadataChanges() || HasCoverArtChanges();
@@ -772,7 +740,8 @@ namespace Archivio.Models
                 _originalValues[nameof(ContentDistributor)] = _contentDistributor;
                 _originalValues[nameof(Publisher)] = _publisher;
                 _originalValues[nameof(ReleaseDate)] = _releaseDate.ToString("yyyy-MM-dd");
-                _originalStructuredMetadataJson = SerializeStructuredMetadata(StructuredMetadata);
+                _originalStructuredMetadata = StructuredMetadata.Clone();
+                _originalStructuredMetadataJson = MetadataChangeComparer.SerializeCanonical(_originalStructuredMetadata);
 
                 HasPendingChangesNotify();
             }
@@ -857,7 +826,8 @@ namespace Archivio.Models
                 _originalValues[nameof(ContentDistributor)] = snapshot.ContentDistributor ?? string.Empty;
                 _originalValues[nameof(Publisher)] = snapshot.Publisher ?? string.Empty;
                 _originalValues[nameof(ReleaseDate)] = snapshot.ReleaseDate.ToString("yyyy-MM-dd");
-                _originalStructuredMetadataJson = SerializeStructuredMetadata(snapshot.StructuredMetadata);
+                _originalStructuredMetadata = snapshot.StructuredMetadata?.Clone() ?? new MetadataDocument();
+                _originalStructuredMetadataJson = MetadataChangeComparer.SerializeCanonical(_originalStructuredMetadata);
                 HasPendingChangesNotify();
             }
             finally
@@ -868,25 +838,7 @@ namespace Archivio.Models
 
         public bool HasMetadataChangesComparedTo(VideoMetadataSnapshot snapshot)
         {
-            if (snapshot == null) return true;
-
-            bool titleChanged = !string.Equals((_title ?? string.Empty).Trim(), (snapshot.Title ?? string.Empty).Trim(), StringComparison.Ordinal);
-            
-            bool participantsChanged = !ArePerformersEqual(_participants, snapshot.Participants);
-            
-            bool commentChanged = !string.Equals((_comment ?? string.Empty).Trim(), (snapshot.Comment ?? string.Empty).Trim(), StringComparison.Ordinal);
-            bool categoryChanged = !AreCategoriesEqual(_category, snapshot.Category);
-            bool catalogNumberChanged = !string.Equals((_catalogNumber ?? string.Empty).Trim(), (snapshot.CatalogNumber ?? string.Empty).Trim(), StringComparison.Ordinal);
-            
-            bool ratingChanged = !string.Equals((_rating ?? string.Empty).Trim(), (snapshot.Rating ?? string.Empty).Trim(), StringComparison.Ordinal);
-            
-            bool contentDistributorChanged = !string.Equals((_contentDistributor ?? string.Empty).Trim(), (snapshot.ContentDistributor ?? string.Empty).Trim(), StringComparison.Ordinal);
-            bool publisherChanged = !string.Equals((_publisher ?? string.Empty).Trim(), (snapshot.Publisher ?? string.Empty).Trim(), StringComparison.Ordinal);
-            
-            bool releaseDateChanged = HasReleaseDateChanged(_releaseDate, snapshot.ReleaseDate);
-
-            return titleChanged || participantsChanged || commentChanged || categoryChanged || catalogNumberChanged || ratingChanged || contentDistributorChanged || publisherChanged || releaseDateChanged
-                || HasStructuredMetadataChangesComparedTo(snapshot.StructuredMetadata);
+            return !MetadataChangeComparer.AreEquivalent(CreateCurrentMetadataSnapshot(), snapshot);
         }
 
         /// <summary>
@@ -896,15 +848,13 @@ namespace Archivio.Models
         public bool HasStructuredMetadataChangesComparedTo(MetadataDocument? original)
         {
             return !string.Equals(
-                SerializeStructuredMetadata(StructuredMetadata),
-                SerializeStructuredMetadata(original),
+                MetadataChangeComparer.SerializeCanonical(StructuredMetadata),
+                MetadataChangeComparer.SerializeCanonical(original),
                 StringComparison.Ordinal);
         }
 
         private static string SerializeStructuredMetadata(MetadataDocument? document)
-        {
-            return JsonSerializer.Serialize(document ?? new MetadataDocument(), new JsonSerializerOptions { WriteIndented = false });
-        }
+            => MetadataChangeComparer.SerializeCanonical(document);
 
         private static bool ArePerformersEqual(string? p1, string? p2)
         {
@@ -946,7 +896,6 @@ namespace Archivio.Models
                 return;
             }
 
-            SaveFailed = false;
             HasPendingChangesNotify();
         }
 
