@@ -737,6 +737,11 @@ internal static class Program
     private static void TestDisplaySettings()
     {
         MetadataFieldCatalog.RefreshCustomFields(null);
+        var savedColumnSettings = JsonSerializer.Deserialize<AppSettings>(
+            JsonSerializer.Serialize(new AppSettings { DetailFieldColumnCount = 2 }))
+            ?? throw new InvalidOperationException("detail column settings did not deserialize");
+        SettingsManager.NormalizeMetadataLayoutSettings(savedColumnSettings);
+        Assert(savedColumnSettings.DetailFieldColumnCount == 2, "two-column detail layout was not preserved by settings serialization");
         Assert(!MetadataFieldCatalog.All.Any(field => field.IsCustom), "empty catalog initialization retained custom fields");
 
         var customField = new CustomMetadataFieldDefinition

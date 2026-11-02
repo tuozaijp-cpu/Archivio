@@ -52,8 +52,8 @@ namespace Archivio.Views
             Unloaded += MainPage_Unloaded;
             VideoThumbnailGridView.ContextFlyout = VideoListDataGrid.ContextFlyout;
             BuildVideoListColumns();
-            RestoreLayoutSettings();
             ApplyLocalization();
+            RestoreLayoutSettings();
             InitializeLanguageMenu();
             UpdateActionButtonStates();
             _ = InitializeFfmpegAsync();
@@ -104,8 +104,8 @@ namespace Archivio.Views
                 ReplaceImageButton.Content = LanguageManager.GetString("Button_ReplaceImage");
                 DeleteImageButton.Content = LanguageManager.GetString("Button_DeleteImage");
                 SaveImageButton.Content = LanguageManager.GetString("Button_SaveImage");
-                DetailFieldColumnsComboBox.Items[0] = new ComboBoxItem { Content = LanguageManager.GetString("DetailFieldColumns_One") };
-                DetailFieldColumnsComboBox.Items[1] = new ComboBoxItem { Content = LanguageManager.GetString("DetailFieldColumns_Two") };
+                ((ComboBoxItem)DetailFieldColumnsComboBox.Items[0]).Content = LanguageManager.GetString("DetailFieldColumns_One");
+                ((ComboBoxItem)DetailFieldColumnsComboBox.Items[1]).Content = LanguageManager.GetString("DetailFieldColumns_Two");
                 ToolTipService.SetToolTip(DetailFieldColumnsComboBox, LanguageManager.GetString("DetailFieldColumns"));
 
                 // Subfolders toggle switch
