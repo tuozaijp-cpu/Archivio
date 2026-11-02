@@ -325,7 +325,6 @@
                             x:Name="VideoPlaybackToggleButton"
                             Content=""
                             IsChecked="False"
-                            IsEnabled="{x:Bind ViewModel.CanStartVideoFileActions, Mode=OneWay}"
                             Click="VideoPlaybackToggleButton_Click" />
                         <ToggleButton
                             x:Name="CoverArtViewToggleButton"
@@ -350,30 +349,25 @@
                         <Button
                             x:Name="AddImageButton"
                             Content=""
-                            Click="AddImageButton_Click"
-                            IsEnabled="{x:Bind ViewModel.IsVideoSelected, Mode=OneWay}" />
+                            Click="AddImageButton_Click" />
                         <Button
                             x:Name="ReplaceImageButton"
                             Content=""
-                            Click="ReplaceImageButton_Click"
-                            IsEnabled="{x:Bind ViewModel.SelectedVideo.IsImageControlsEnabled, Mode=OneWay}" />
+                            Click="ReplaceImageButton_Click" />
                         <Button
                             x:Name="DeleteImageButton"
                             Content=""
-                            Click="DeleteImageButton_Click"
-                            IsEnabled="{x:Bind ViewModel.SelectedVideo.IsImageControlsEnabled, Mode=OneWay}" />
+                            Click="DeleteImageButton_Click" />
                         <Button
                             x:Name="SaveImageButton"
                             Content=""
-                            Click="SaveImageButton_Click"
-                            IsEnabled="{x:Bind ViewModel.SelectedVideo.HasCoverArtChangesNotify, Mode=OneWay}" />
+                            Click="SaveImageButton_Click" />
                     </StackPanel>
                     <StackPanel Grid.Column="4" HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
                         <Button
                             x:Name="SaveMetadataButton"
                             Content=""
-                            Click="OnSaveClicked"
-                            IsEnabled="{x:Bind ViewModel.SelectedVideo.HasMetadataChangesNotify, Mode=OneWay}" />
+                            Click="OnSaveClicked" />
                         <ComboBox
                             x:Name="DetailFieldColumnsComboBox"
                             Width="100"

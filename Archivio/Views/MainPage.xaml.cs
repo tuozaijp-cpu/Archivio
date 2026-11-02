@@ -1422,6 +1422,11 @@ namespace Archivio.Views
 
         private async void OnSaveClickedCore(object sender, RoutedEventArgs e)
         {
+            if (!ViewModel.CanSaveMetadata || _isPlaybackView)
+            {
+                return;
+            }
+
             await ViewModel.Details.SaveMetadataAsync();
         }
 
@@ -1528,6 +1533,11 @@ namespace Archivio.Views
 
         private async void AddImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
+            if (!ViewModel.CanAddCoverArt || _isPlaybackView)
+            {
+                return;
+            }
+
             await ViewModel.Details.AddCoverArtImageAsync();
         }
 
@@ -1541,7 +1551,10 @@ namespace Archivio.Views
 
         private async void CoverArt_DropCore(object sender, DragEventArgs e)
         {
-            if (ViewModel.SelectedVideo is null
+            var selectedVideo = ViewModel.SelectedVideo;
+            if (selectedVideo is null
+                || !ViewModel.CanAddCoverArt
+                || _isPlaybackView
                 || !e.DataView.Contains(StandardDataFormats.StorageItems))
             {
                 return;
@@ -1560,8 +1573,7 @@ namespace Archivio.Views
             }
 
             var replace = false;
-            if (ViewModel.SelectedVideo.HasCoverArt
-                || ViewModel.SelectedVideo.CoverArtImages.Count > 0)
+            if (selectedVideo.HasCoverArt || selectedVideo.CoverArtImages.Count > 0)
             {
                 var dialog = new ContentDialog
                 {
@@ -1579,6 +1591,11 @@ namespace Archivio.Views
                 }
 
                 replace = result == ContentDialogResult.Secondary;
+            }
+
+            if (ViewModel.SelectedVideo != selectedVideo || !ViewModel.CanAddCoverArt || _isPlaybackView)
+            {
+                return;
             }
 
             for (var index = 0; index < imageFiles.Count; index++)
@@ -1853,11 +1870,21 @@ namespace Archivio.Views
 
         private async void ReplaceImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
+            if (!ViewModel.CanModifyCoverArt || _isPlaybackView)
+            {
+                return;
+            }
+
             await ViewModel.Details.ReplaceCoverArtImageAsync();
         }
 
         private void DeleteImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
+            if (!ViewModel.CanModifyCoverArt || _isPlaybackView)
+            {
+                return;
+            }
+
             ViewModel.Details.DeleteCoverArtImage();
         }
 
@@ -1946,7 +1973,11 @@ namespace Archivio.Views
                 VideoPlaybackToggleButton.IsChecked = false;
                 await UpdatePlaybackSourceAsync();
             }
-            else if (e.PropertyName == nameof(MainPageViewModel.CanStartVideoFileActions))
+            else if (e.PropertyName is nameof(MainPageViewModel.CanStartVideoFileActions)
+                or nameof(MainPageViewModel.CanAddCoverArt)
+                or nameof(MainPageViewModel.CanModifyCoverArt)
+                or nameof(MainPageViewModel.CanSaveCoverArt)
+                or nameof(MainPageViewModel.CanSaveMetadata))
             {
                 UpdateActionButtonStates();
                 if (!ViewModel.CanStartVideoFileActions)
@@ -1967,10 +1998,18 @@ namespace Archivio.Views
 
         private void UpdateActionButtonStates()
         {
+            var canInteractWithFile = ViewModel.CanStartVideoFileActions && !_isPlaybackView;
+            VideoPlaybackToggleButton.IsEnabled = CanStartVideoPlayback && !_isPlaybackView;
+            CoverArtViewToggleButton.IsEnabled = ViewModel.CanStartVideoFileActions;
             UpdateCaptureFrameButtonState();
-            CreateThumbnailSheetButton.IsEnabled = ViewModel.CanStartVideoFileActions
+            CreateThumbnailSheetButton.IsEnabled = canInteractWithFile
                 && _ffmpegPath is not null
                 && !_isThumbnailSheetGenerating;
+            AddImageButton.IsEnabled = canInteractWithFile && ViewModel.CanAddCoverArt;
+            ReplaceImageButton.IsEnabled = canInteractWithFile && ViewModel.CanModifyCoverArt;
+            DeleteImageButton.IsEnabled = canInteractWithFile && ViewModel.CanModifyCoverArt;
+            SaveImageButton.IsEnabled = canInteractWithFile && ViewModel.CanSaveCoverArt;
+            SaveMetadataButton.IsEnabled = canInteractWithFile && ViewModel.CanSaveMetadata;
             ThumbnailSheetProgressRing.IsActive = _isThumbnailSheetGenerating;
             ThumbnailSheetProgressRing.Visibility = _isThumbnailSheetGenerating
                 ? Visibility.Visible
@@ -1985,17 +2024,25 @@ namespace Archivio.Views
                     : LanguageManager.GetString("Tooltip_CreateThumbnailSheet"));
         }
 
+        private bool CanStartVideoPlayback => ViewModel.CanStartVideoFileActions && !_isThumbnailSheetGenerating;
+
         private async void CoverArtViewToggleButton_ClickCore(object sender, RoutedEventArgs e)
         {
+            if (!ViewModel.CanStartVideoFileActions)
+            {
+                return;
+            }
+
             _isPlaybackView = false;
             CoverArtViewToggleButton.IsChecked = true;
             VideoPlaybackToggleButton.IsChecked = false;
+            UpdateActionButtonStates();
             await UpdatePlaybackSourceAsync();
         }
 
         private async void VideoPlaybackToggleButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanStartVideoFileActions)
+            if (!CanStartVideoPlayback)
             {
                 VideoPlaybackToggleButton.IsChecked = false;
                 return;
@@ -2004,6 +2051,7 @@ namespace Archivio.Views
             _isPlaybackView = true;
             CoverArtViewToggleButton.IsChecked = false;
             VideoPlaybackToggleButton.IsChecked = true;
+            UpdateActionButtonStates();
             await UpdatePlaybackSourceAsync();
         }
 
@@ -2017,6 +2065,7 @@ namespace Archivio.Views
             // 表示の切り替えはプレイヤーの生成状態に依存させない。
             CoverArtContent.Visibility = _isPlaybackView ? Visibility.Collapsed : Visibility.Visible;
             VideoPlaybackContent.Visibility = _isPlaybackView ? Visibility.Visible : Visibility.Collapsed;
+            UpdateActionButtonStates();
 
             if (!_isPlaybackView)
             {
@@ -2106,6 +2155,11 @@ namespace Archivio.Views
 
         private async void SaveImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
+            if (!ViewModel.CanSaveCoverArt || _isPlaybackView)
+            {
+                return;
+            }
+
             await ViewModel.Details.SaveCoverArtAsync();
         }
 

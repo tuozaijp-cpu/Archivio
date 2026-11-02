@@ -269,7 +269,7 @@ namespace Archivio.ViewModels
 
                     OnPropertyChanged(nameof(HasPendingChanges));
                     OnPropertyChanged(nameof(IsVideoSelected));
-                    OnPropertyChanged(nameof(CanStartVideoFileActions));
+                    NotifySelectedVideoActionProperties();
                     OnPropertyChanged(nameof(DetailedPanelVisibility));
                     _ = LoadSelectedVideoAsync();
                 }
@@ -347,6 +347,14 @@ namespace Archivio.ViewModels
         public bool IsVideoSelected => SelectedVideo is not null && !SelectedVideo.IsDeleted;
 
         public bool CanStartVideoFileActions => IsVideoSelected && SelectedVideo?.IsFileSaveInProgress != true;
+
+        public bool CanAddCoverArt => CanStartVideoFileActions;
+
+        public bool CanModifyCoverArt => CanStartVideoFileActions && SelectedVideo?.IsImageControlsEnabled == true;
+
+        public bool CanSaveCoverArt => CanStartVideoFileActions && SelectedVideo?.HasCoverArtChangesNotify == true;
+
+        public bool CanSaveMetadata => CanStartVideoFileActions && SelectedVideo?.HasMetadataChangesNotify == true;
 
         public Visibility DetailedPanelVisibility => IsVideoSelected ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1707,10 +1715,23 @@ namespace Archivio.ViewModels
             {
                 OnPropertyChanged(nameof(HasPendingChanges));
             }
-            else if (e.PropertyName == nameof(VideoFileItem.IsFileSaveInProgress))
+
+            if (e.PropertyName is nameof(VideoFileItem.IsFileSaveInProgress)
+                or nameof(VideoFileItem.IsImageControlsEnabled)
+                or nameof(VideoFileItem.HasCoverArtChangesNotify)
+                or nameof(VideoFileItem.HasMetadataChangesNotify))
             {
-                OnPropertyChanged(nameof(CanStartVideoFileActions));
+                NotifySelectedVideoActionProperties();
             }
+        }
+
+        private void NotifySelectedVideoActionProperties()
+        {
+            OnPropertyChanged(nameof(CanStartVideoFileActions));
+            OnPropertyChanged(nameof(CanAddCoverArt));
+            OnPropertyChanged(nameof(CanModifyCoverArt));
+            OnPropertyChanged(nameof(CanSaveCoverArt));
+            OnPropertyChanged(nameof(CanSaveMetadata));
         }
 
         private void SetStatusError(string message, Exception? ex = null, string? targetPath = null)

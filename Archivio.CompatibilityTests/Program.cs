@@ -162,17 +162,28 @@ internal static class Program
     private static void TestFileSaveOperationState()
     {
         var item = new VideoFileItem("video.mp4");
+        var stateNotifications = 0;
+        item.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(VideoFileItem.IsFileSaveInProgress))
+            {
+                stateNotifications++;
+            }
+        };
         Assert(!item.IsFileSaveInProgress, "file save state should start inactive");
 
         item.BeginFileSaveOperation();
         item.BeginFileSaveOperation();
         Assert(item.IsFileSaveInProgress, "file save state was not activated");
+        Assert(stateNotifications == 1, "starting overlapping saves emitted an unexpected state notification");
 
         item.EndFileSaveOperation();
         Assert(item.IsFileSaveInProgress, "file save state ended while another save was active");
+        Assert(stateNotifications == 1, "ending one of overlapping saves emitted an unexpected state notification");
 
         item.EndFileSaveOperation();
         Assert(!item.IsFileSaveInProgress, "file save state did not return to inactive");
+        Assert(stateNotifications == 2, "ending the final save did not notify state change");
     }
 
     private static void TestContainerRoundTrip(string fixtureName)
