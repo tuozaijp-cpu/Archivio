@@ -131,15 +131,6 @@ namespace Archivio.ViewModels
             startInfo.ArgumentList.Add("-c");
             startInfo.ArgumentList.Add("copy");
 
-            if (extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".m4v", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".mov", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".3gp", StringComparison.OrdinalIgnoreCase))
-            {
-                startInfo.ArgumentList.Add("-movflags");
-                startInfo.ArgumentList.Add("+faststart");
-            }
-
             startInfo.ArgumentList.Add(outputPath);
             return startInfo;
         }
