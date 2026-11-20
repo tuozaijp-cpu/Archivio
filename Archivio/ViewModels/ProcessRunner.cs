@@ -55,7 +55,9 @@ internal static class ProcessRunner
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(timeout);
 
-        var outputTask = ReadOutputAsync(process);
+        var outputTask = startInfo.RedirectStandardOutput
+            ? ReadOutputAsync(process)
+            : Task.FromResult(Array.Empty<byte>());
         var errorTask = process.StandardError.ReadToEndAsync();
 
         try

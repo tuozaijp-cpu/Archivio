@@ -3,7 +3,7 @@
 ; -----------------------------------------------------------------------------
 
 #define AppName "Archivio"
-#define AppVersion "1.4.2"
+#define AppVersion "1.4.5"
 #define AppPublisher "tuoza"
 #define AppExeName "Archivio.exe"
 #define ReleasePublishDir "Archivio\bin\Release\net10.0-windows10.0.19041.0\win-x64\publish"

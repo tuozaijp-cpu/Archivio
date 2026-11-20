@@ -36,6 +36,19 @@ internal static void RunProcessRunnerLifecycle()
         Assert(result.StandardError.Contains("runner-error", StringComparison.OrdinalIgnoreCase),
             "process runner did not capture stderr");
 
+        var withoutRedirectedOutput = new ProcessStartInfo("cmd.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        withoutRedirectedOutput.ArgumentList.Add("/c");
+        withoutRedirectedOutput.ArgumentList.Add("exit /b 0");
+        var outputIgnored = ProcessRunner.RunAsync(withoutRedirectedOutput, TimeSpan.FromSeconds(5))
+            .GetAwaiter().GetResult();
+        Assert(outputIgnored.StandardOutput.Length == 0,
+            "process runner should not read stdout when it is not redirected");
+
         var timeout = new ProcessStartInfo("cmd.exe")
         {
             UseShellExecute = false,
