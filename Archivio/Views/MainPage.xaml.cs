@@ -34,7 +34,8 @@ namespace Archivio.Views
         private bool _isRestoringLayoutSettings;
         private bool _isThumbnailSheetGenerating;
         private string? _ffmpegPath;
-        private readonly FfmpegMediaService _ffmpegMediaService = new();
+        private readonly VideoMediaProcessingService _ffmpegMediaService = new();
+        private readonly MainPageSettingsService SettingsManager = new();
         private static MetadataFieldDefinition[] ListFieldDefinitions => MetadataFieldCatalog.ListFields.ToArray();
         private static MetadataFieldDefinition[] DetailFieldDefinitions => MetadataFieldCatalog.DetailFields.ToArray();
         private readonly Dictionary<string, FrameworkElement> _detailControls = new(StringComparer.Ordinal);
@@ -1566,7 +1567,7 @@ namespace Archivio.Views
                 {
                     // 動画を再生していなくても、選択直後の非同期読み込みが完了していない場合に
                     // ここで技術情報を直接取得してサムネイル生成を継続する。
-                    var probeResult = await new MediaProbeService().ProbeAsync(file, cancellationToken);
+                    var probeResult = await _ffmpegMediaService.ProbeAsync(file, cancellationToken);
                     duration = probeResult.Duration
                         ?? probeResult.Technical.Duration
                         ?? TimeSpan.Zero;

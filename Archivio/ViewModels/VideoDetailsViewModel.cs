@@ -36,6 +36,7 @@ namespace Archivio.ViewModels
 
         private VideoFileItem? _selectedVideo;
         private CancellationTokenSource? _loadingCts;
+        private readonly SelectionGenerationGuard _selectionGuard = new();
 
         public VideoDetailsViewModel(
             IVideoMetadataService metadataService,
@@ -73,6 +74,7 @@ namespace Archivio.ViewModels
 
                 if (SetProperty(ref _selectedVideo, value))
                 {
+                    var selectionVersion = _selectionGuard.Begin();
                     if (_selectedVideo is not null)
                     {
                         _selectedVideo.PropertyChanged += SelectedVideo_PropertyChanged;
@@ -82,7 +84,7 @@ namespace Archivio.ViewModels
                     OnPropertyChanged(nameof(DetailedPanelVisibility));
                     OnPropertyChanged(nameof(HasPendingChanges));
 
-                    _ = SetActiveItemAsync(value);
+                    _ = SetActiveItemAsync(value, selectionVersion);
                 }
             }
         }
@@ -94,12 +96,15 @@ namespace Archivio.ViewModels
         public bool HasPendingChanges => SelectedVideo?.HasPendingChanges ?? false;
 
         public async Task SetActiveItemAsync(VideoFileItem? item)
+            => await SetActiveItemAsync(item, _selectionGuard.Begin());
+
+        private async Task SetActiveItemAsync(VideoFileItem? item, long selectionVersion)
         {
             _loadingCts?.Cancel();
             _loadingCts = new CancellationTokenSource();
             var cts = _loadingCts;
 
-            if (item is null)
+            if (item is null || !_selectionGuard.IsCurrent(selectionVersion))
             {
                 return;
             }
@@ -118,7 +123,9 @@ namespace Archivio.ViewModels
                 // カバー画像のロード
                 await LoadCoverArtAsync(item);
 
-                if (!cts.IsCancellationRequested && SelectedVideo == item)
+                if (!cts.IsCancellationRequested
+                    && _selectionGuard.IsCurrent(selectionVersion)
+                    && SelectedVideo == item)
                 {
                     await DispatcherHelper.RunOnUIThreadAsync(() =>
                     {
@@ -133,7 +140,7 @@ namespace Archivio.ViewModels
             catch (Exception ex)
             {
                 AppLogger.Error("選択中の動画カバー画像の読み込みに失敗しました", ex, item.FullPath);
-                if (SelectedVideo == item)
+                if (_selectionGuard.IsCurrent(selectionVersion) && SelectedVideo == item)
                 {
                     _setError(LanguageManager.GetString("Msg_SelectedCoverArtLoadFailed"), ex, item.FullPath);
                 }

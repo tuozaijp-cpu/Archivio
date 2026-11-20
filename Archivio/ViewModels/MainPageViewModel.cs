@@ -28,6 +28,7 @@ namespace Archivio.ViewModels
         private string _folderPath = string.Empty;
         private bool _isBusy;
         private CancellationTokenSource? _loadingCts;
+        private readonly SelectionGenerationGuard _selectionGuard = new();
         private CancellationTokenSource? _refreshCts;
         private readonly SemaphoreSlim _metadataReadSemaphore = new(8, 8);
         private readonly SemaphoreSlim _metadataSaveSemaphore = new(1, 1);
@@ -156,6 +157,7 @@ namespace Archivio.ViewModels
 
                 if (SetProperty(ref _selectedVideo, value))
                 {
+                    var selectionVersion = _selectionGuard.Begin();
                     if (_selectedVideo is not null)
                     {
                         _selectedVideo.PropertyChanged += SelectedVideo_PropertyChanged;
@@ -170,7 +172,7 @@ namespace Archivio.ViewModels
                     OnPropertyChanged(nameof(IsVideoSelected));
                     NotifySelectedVideoActionProperties();
                     OnPropertyChanged(nameof(DetailedPanelVisibility));
-                    _ = LoadSelectedVideoAsync();
+                    _ = LoadSelectedVideoAsync(selectionVersion);
                 }
             }
         }
@@ -1174,13 +1176,13 @@ namespace Archivio.ViewModels
 
 
 
-        private async Task LoadSelectedVideoAsync()
+        private async Task LoadSelectedVideoAsync(long selectionVersion)
         {
             _loadingCts?.Cancel();
             _loadingCts = new CancellationTokenSource();
             var cts = _loadingCts;
 
-            if (SelectedVideo is null || SelectedVideo.IsDeleted)
+            if (SelectedVideo is null || SelectedVideo.IsDeleted || !_selectionGuard.IsCurrent(selectionVersion))
             {
                 return;
             }
@@ -1195,7 +1197,9 @@ namespace Archivio.ViewModels
                 // キャッシュに頼らず直接ファイルから読み込み直すために force: true を指定
                 await LoadWindowsPropertiesAsync(currentVideo, force: true, cancellationToken: cts.Token);
 
-                if (!cts.IsCancellationRequested && SelectedVideo == currentVideo)
+                if (!cts.IsCancellationRequested
+                    && _selectionGuard.IsCurrent(selectionVersion)
+                    && SelectedVideo == currentVideo)
                 {
                     await DispatcherHelper.RunOnUIThreadAsync(() =>
                     {
@@ -1210,7 +1214,7 @@ namespace Archivio.ViewModels
             catch (Exception ex)
             {
                 AppLogger.Error("選択中の動画の読み込みに失敗しました", ex, currentVideo.FullPath);
-                if (SelectedVideo == currentVideo)
+                if (_selectionGuard.IsCurrent(selectionVersion) && SelectedVideo == currentVideo)
                 {
                     SetStatusError(LanguageManager.GetString("Msg_SelectedLoadFailed"), ex, currentVideo.FullPath);
                 }

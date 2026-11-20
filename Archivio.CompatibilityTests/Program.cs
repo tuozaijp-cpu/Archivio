@@ -34,6 +34,7 @@ internal static class Program
             Run("metadata loading coordinator retries and cancels", TestMetadataLoadCoordinator);
             Run("file save operation state is reference counted", TestFileSaveOperationState);
             Run("video file state boundaries and compatibility facade", TestVideoFileStateBoundaries);
+            Run("selection generation prevents stale updates", TestSelectionGenerationGuard);
             Run("FFmpeg playback commands and executable discovery", TestFfmpegMediaService);
             Run("FFmpeg process runner lifecycle", TestProcessRunner);
             Run("metadata field format capabilities", TestMetadataFieldFormatCapabilities);
@@ -256,6 +257,15 @@ internal static class Program
             "change tracking state did not retain the stable field ID");
         Assert(item.CoverArtState.Images.All(image => image.Data is not null),
             "cover art state contains invalid image data");
+    }
+
+    private static void TestSelectionGenerationGuard()
+    {
+        var guard = new SelectionGenerationGuard();
+        var first = guard.Begin();
+        var second = guard.Begin();
+        Assert(!guard.IsCurrent(first) && guard.IsCurrent(second),
+            "a previous selection generation was still considered current");
     }
 
     private static void TestCustomMetadataEditorValueConversion()
