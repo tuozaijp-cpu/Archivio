@@ -253,6 +253,8 @@ namespace Archivio.ViewModels
 
         public bool CanSaveCoverArt => CanStartVideoFileActions && SelectedVideo?.HasCoverArtChangesNotify == true;
 
+        public bool CanExportCoverArt => CanStartVideoFileActions && SelectedVideo?.IsImageControlsEnabled == true;
+
         public bool CanSaveMetadata => CanStartVideoFileActions && SelectedVideo?.HasMetadataChangesNotify == true;
 
         public Visibility DetailedPanelVisibility => IsVideoSelected ? Visibility.Visible : Visibility.Collapsed;
@@ -750,6 +752,10 @@ namespace Archivio.ViewModels
             {
                 var message = LanguageManager.GetString("Msg_FFmpegExitError", ex.ExitCode, ex.ErrorText);
                 SetStatusError(LanguageManager.GetString("Msg_ReMuxFailed", message), ex, item.FullPath);
+            }
+            catch (FfmpegProcessTimeoutException ex)
+            {
+                SetStatusError(LanguageManager.GetString("Msg_ReMuxFailed", LanguageManager.GetString("Msg_FFmpegTimeout")), ex, item.FullPath);
             }
             catch (Exception ex)
             {
@@ -1432,6 +1438,7 @@ namespace Archivio.ViewModels
             OnPropertyChanged(nameof(CanAddCoverArt));
             OnPropertyChanged(nameof(CanModifyCoverArt));
             OnPropertyChanged(nameof(CanSaveCoverArt));
+            OnPropertyChanged(nameof(CanExportCoverArt));
             OnPropertyChanged(nameof(CanSaveMetadata));
         }
 

@@ -14,4 +14,5 @@ public partial class MainPage
     private void CoverArt_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e) => CoverArt_DoubleTappedCore(sender, e);
     private void CoverArtFlipView_SelectionChanged(object sender, SelectionChangedEventArgs e) => CoverArtFlipView_SelectionChangedCore(sender, e);
     private void SaveImageButton_Click(object sender, RoutedEventArgs e) => SaveImageButton_ClickCore(sender, e);
+    private void ExportImageButton_Click(object sender, RoutedEventArgs e) => ExportImageButton_ClickCore(sender, e);
 }

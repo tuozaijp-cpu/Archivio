@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Archivio.Models;
 using Archivio.ViewModels;
@@ -14,8 +15,14 @@ internal static class Program
     private static int _failed;
     private static string _root = string.Empty;
 
-    private static int Main()
+    private static int Main(string[] args)
     {
+        if (args.Contains("--ffmpeg-process-runner", StringComparer.Ordinal))
+        {
+            Run("FFmpeg process runner lifecycle", TestProcessRunner);
+            return _failed == 0 ? 0 : 1;
+        }
+
         _root = Path.Combine(Path.GetTempPath(), $"Archivio-compat-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_root);
         try
@@ -27,6 +34,7 @@ internal static class Program
             Run("metadata loading coordinator retries and cancels", TestMetadataLoadCoordinator);
             Run("file save operation state is reference counted", TestFileSaveOperationState);
             Run("FFmpeg playback commands and executable discovery", TestFfmpegMediaService);
+            Run("FFmpeg process runner lifecycle", TestProcessRunner);
             Run("metadata field format capabilities", TestMetadataFieldFormatCapabilities);
             Run("create isolated media fixtures", CreateFixtures);
             Run("file operation naming rules", TestVideoFileOperationNamingRules);
@@ -437,6 +445,45 @@ internal static class Program
         }
 
         Assert(invalidDurationRejected, "thumbnail sheet accepted an invalid duration");
+    }
+
+    private static void TestProcessRunner()
+    {
+        var success = new ProcessStartInfo("cmd.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        success.ArgumentList.Add("/c");
+        success.ArgumentList.Add("echo runner-output & echo runner-error 1>&2");
+        var result = ProcessRunner.RunAsync(success, TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        Assert(Encoding.UTF8.GetString(result.StandardOutput).Contains("runner-output", StringComparison.OrdinalIgnoreCase),
+            "process runner did not capture stdout");
+        Assert(result.StandardError.Contains("runner-error", StringComparison.OrdinalIgnoreCase),
+            "process runner did not capture stderr");
+
+        var timeout = new ProcessStartInfo("cmd.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        timeout.ArgumentList.Add("/c");
+        timeout.ArgumentList.Add("ping 127.0.0.1 -n 30 > nul");
+        var timedOut = false;
+        try
+        {
+            ProcessRunner.RunAsync(timeout, TimeSpan.FromMilliseconds(100)).GetAwaiter().GetResult();
+        }
+        catch (FfmpegProcessTimeoutException)
+        {
+            timedOut = true;
+        }
+
+        Assert(timedOut, "process runner did not distinguish timeout");
     }
 
     private static void TestFfmpegMediaProcessing()

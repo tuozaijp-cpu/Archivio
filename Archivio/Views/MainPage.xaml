@@ -362,6 +362,10 @@
                             x:Name="SaveImageButton"
                             Content=""
                             Click="SaveImageButton_Click" />
+                        <Button
+                            x:Name="ExportImageButton"
+                            Content=""
+                            Click="ExportImageButton_Click" />
                     </StackPanel>
                     <StackPanel Grid.Column="4" HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
                         <Button

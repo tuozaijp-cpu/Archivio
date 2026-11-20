@@ -13,28 +13,10 @@ namespace Archivio.ViewModels
         Task<StorageFile> ReMuxAsync(StorageFile file);
     }
 
-    internal sealed class FfmpegProcessStartException : Exception
-    {
-        public FfmpegProcessStartException() : base("FFmpeg process could not be started.")
-        {
-        }
-    }
-
-    internal sealed class FfmpegExecutionException : Exception
-    {
-        public int ExitCode { get; }
-        public string ErrorText { get; }
-
-        public FfmpegExecutionException(int exitCode, string errorText)
-            : base($"FFmpeg exited with code {exitCode}.")
-        {
-            ExitCode = exitCode;
-            ErrorText = errorText;
-        }
-    }
-
     internal sealed class VideoFileOperationsService : IVideoFileOperationsService
     {
+        internal static readonly TimeSpan RemuxTimeout = TimeSpan.FromMinutes(10);
+
         public async Task RenameAsync(StorageFile file, string newName)
         {
             await file.RenameAsync(GetRenameName(file.Name, newName), NameCollisionOption.FailIfExists);
@@ -72,34 +54,10 @@ namespace Archivio.ViewModels
             var outputPath = GetAvailableOutputPath(directory, baseName, extension);
             var startInfo = CreateStartInfo(inputPath, outputPath, extension);
 
-            using var process = Process.Start(startInfo) ?? throw new FfmpegProcessStartException();
-            var errorTask = process.StandardError.ReadToEndAsync();
-
-            try
+            var result = await ProcessRunner.RunAsync(startInfo, RemuxTimeout);
+            if (result.ExitCode != 0)
             {
-                await process.WaitForExitAsync();
-            }
-            catch
-            {
-                try
-                {
-                    if (!process.HasExited)
-                    {
-                        process.Kill(entireProcessTree: true);
-                    }
-                }
-                catch
-                {
-                }
-
-                await process.WaitForExitAsync();
-                throw;
-            }
-
-            var errorText = await errorTask;
-            if (process.ExitCode != 0)
-            {
-                throw new FfmpegExecutionException(process.ExitCode, errorText);
+                throw new FfmpegExecutionException(result.ExitCode, result.StandardError);
             }
 
             return await StorageFile.GetFileFromPathAsync(outputPath);

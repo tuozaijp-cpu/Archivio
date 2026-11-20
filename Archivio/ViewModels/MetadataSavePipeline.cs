@@ -26,22 +26,23 @@ internal static class MetadataChangePlanner
     {
         var requested = changedProperties?
             .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(ResolveFieldId)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? new List<string>();
         var adapter = EmbeddedMetadataFormatAdapterSelector.Select(path);
         var candidateFields = new List<string>();
 
-        AddChanged(candidateFields, requested, "Title", metadata.Title, originalMetadata?.Title);
-        AddChanged(candidateFields, requested, "Participants", metadata.Participants, originalMetadata?.Participants);
-        AddChanged(candidateFields, requested, "Comment", metadata.Comment, originalMetadata?.Comment);
-        AddChanged(candidateFields, requested, "Category", metadata.Category, originalMetadata?.Category);
-        AddChanged(candidateFields, requested, "CatalogNumber", metadata.CatalogNumber, originalMetadata?.CatalogNumber);
-        AddChanged(candidateFields, requested, "Rating", metadata.Rating, originalMetadata?.Rating);
-        AddChanged(candidateFields, requested, "ContentDistributor", metadata.ContentDistributor, originalMetadata?.ContentDistributor);
-        AddChanged(candidateFields, requested, "Publisher", metadata.Publisher, originalMetadata?.Publisher);
-        if (requested.Contains("ReleaseDate") && ReleaseDateChanged(metadata.ReleaseDate, originalMetadata?.ReleaseDate))
+        AddChanged(candidateFields, requested, MetadataFieldIds.WorkTitle, metadata.Title, originalMetadata?.Title);
+        AddChanged(candidateFields, requested, MetadataFieldIds.Participants, metadata.Participants, originalMetadata?.Participants);
+        AddChanged(candidateFields, requested, MetadataFieldIds.Comment, metadata.Comment, originalMetadata?.Comment);
+        AddChanged(candidateFields, requested, MetadataFieldIds.Category, metadata.Category, originalMetadata?.Category);
+        AddChanged(candidateFields, requested, MetadataFieldIds.CatalogNumber, metadata.CatalogNumber, originalMetadata?.CatalogNumber);
+        AddChanged(candidateFields, requested, MetadataFieldIds.Rating, metadata.Rating, originalMetadata?.Rating);
+        AddChanged(candidateFields, requested, MetadataFieldIds.Label, metadata.ContentDistributor, originalMetadata?.ContentDistributor);
+        AddChanged(candidateFields, requested, MetadataFieldIds.Publisher, metadata.Publisher, originalMetadata?.Publisher);
+        if (requested.Contains(MetadataFieldIds.ReleaseDate) && ReleaseDateChanged(metadata.ReleaseDate, originalMetadata?.ReleaseDate))
         {
-            candidateFields.Add("ReleaseDate");
+            candidateFields.Add(MetadataFieldIds.ReleaseDate);
         }
 
         candidateFields.AddRange(requested.Where(ArchivioMetadataPayloadMapper.IsPayloadFieldId));
@@ -240,17 +241,18 @@ internal static class MetadataVerificationService
         var actual = MetadataDocumentMapper.ToSnapshot(document);
         foreach (var field in fields)
         {
-            var matches = field switch
+            var fieldId = MetadataChangePlanner.ResolveFieldId(field);
+            var matches = fieldId switch
             {
-                "Title" => string.Equals(actual.Title, expected.Title, StringComparison.Ordinal),
-                "Participants" => string.Equals(actual.Participants, expected.Participants, StringComparison.Ordinal),
-                "Comment" => string.Equals(actual.Comment, expected.Comment, StringComparison.Ordinal),
-                "Category" => string.Equals(actual.Category, expected.Category, StringComparison.Ordinal),
-                "CatalogNumber" => string.Equals(actual.CatalogNumber, expected.CatalogNumber, StringComparison.Ordinal),
-                "Publisher" => string.Equals(actual.Publisher, expected.Publisher, StringComparison.Ordinal),
-                "ContentDistributor" => string.Equals(actual.ContentDistributor, expected.ContentDistributor, StringComparison.Ordinal),
-                "Rating" => string.Equals(actual.Rating, expected.Rating, StringComparison.Ordinal),
-                "ReleaseDate" or "dates.release" => actual.ReleaseDate.Date == expected.ReleaseDate.Date,
+                MetadataFieldIds.WorkTitle => string.Equals(actual.Title, expected.Title, StringComparison.Ordinal),
+                MetadataFieldIds.Participants => string.Equals(actual.Participants, expected.Participants, StringComparison.Ordinal),
+                MetadataFieldIds.Comment => string.Equals(actual.Comment, expected.Comment, StringComparison.Ordinal),
+                MetadataFieldIds.Category => string.Equals(actual.Category, expected.Category, StringComparison.Ordinal),
+                MetadataFieldIds.CatalogNumber => string.Equals(actual.CatalogNumber, expected.CatalogNumber, StringComparison.Ordinal),
+                MetadataFieldIds.Publisher => string.Equals(actual.Publisher, expected.Publisher, StringComparison.Ordinal),
+                MetadataFieldIds.Label => string.Equals(actual.ContentDistributor, expected.ContentDistributor, StringComparison.Ordinal),
+                MetadataFieldIds.Rating => string.Equals(actual.Rating, expected.Rating, StringComparison.Ordinal),
+                MetadataFieldIds.ReleaseDate => actual.ReleaseDate.Date == expected.ReleaseDate.Date,
                 _ => true
             };
             if (!matches)

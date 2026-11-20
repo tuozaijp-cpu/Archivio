@@ -104,6 +104,7 @@ namespace Archivio.Views
                 ReplaceImageButton.Content = LanguageManager.GetString("Button_ReplaceImage");
                 DeleteImageButton.Content = LanguageManager.GetString("Button_DeleteImage");
                 SaveImageButton.Content = LanguageManager.GetString("Button_SaveImage");
+                ExportImageButton.Content = LanguageManager.GetString("Button_ExportImage");
                 ((ComboBoxItem)DetailFieldColumnsComboBox.Items[0]).Content = LanguageManager.GetString("DetailFieldColumns_One");
                 ((ComboBoxItem)DetailFieldColumnsComboBox.Items[1]).Content = LanguageManager.GetString("DetailFieldColumns_Two");
                 ToolTipService.SetToolTip(DetailFieldColumnsComboBox, LanguageManager.GetString("DetailFieldColumns"));
@@ -1522,6 +1523,10 @@ namespace Archivio.Views
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
             }
+            catch (FfmpegProcessTimeoutException)
+            {
+                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_FFmpegTimeout"));
+            }
             catch (Exception ex)
             {
                 AppLogger.Error("動画フレームのキャプチャに失敗しました", ex, targetVideo.FullPath);
@@ -1589,6 +1594,10 @@ namespace Archivio.Views
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+            }
+            catch (FfmpegProcessTimeoutException)
+            {
+                ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_FFmpegTimeout"));
             }
             catch (Exception ex)
             {
@@ -1740,6 +1749,7 @@ namespace Archivio.Views
                 or nameof(MainPageViewModel.CanAddCoverArt)
                 or nameof(MainPageViewModel.CanModifyCoverArt)
                 or nameof(MainPageViewModel.CanSaveCoverArt)
+                or nameof(MainPageViewModel.CanExportCoverArt)
                 or nameof(MainPageViewModel.CanSaveMetadata))
             {
                 UpdateActionButtonStates();
@@ -1773,6 +1783,7 @@ namespace Archivio.Views
             ReplaceImageButton.IsEnabled = canEditCoverArt && ViewModel.CanModifyCoverArt;
             DeleteImageButton.IsEnabled = canEditCoverArt && ViewModel.CanModifyCoverArt;
             SaveImageButton.IsEnabled = canInteractWithFile && ViewModel.CanSaveCoverArt;
+            ExportImageButton.IsEnabled = canInteractWithFile && ViewModel.CanExportCoverArt;
             SaveMetadataButton.IsEnabled = canInteractWithFile && ViewModel.CanSaveMetadata;
             ThumbnailSheetProgressRing.IsActive = _isThumbnailSheetGenerating;
             ThumbnailSheetProgressRing.Visibility = _isThumbnailSheetGenerating
@@ -1925,6 +1936,16 @@ namespace Archivio.Views
             }
 
             await ViewModel.Details.SaveCoverArtAsync();
+        }
+
+        private async void ExportImageButton_ClickCore(object sender, RoutedEventArgs e)
+        {
+            if (!ViewModel.CanExportCoverArt || _isPlaybackView)
+            {
+                return;
+            }
+
+            await ViewModel.Details.ExportCoverArtAsync();
         }
 
         private void FilterTextBox_TextChangedCore(object sender, TextChangedEventArgs e)

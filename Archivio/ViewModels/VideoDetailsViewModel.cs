@@ -389,18 +389,89 @@ namespace Archivio.ViewModels
             }
         }
 
+        public async Task ExportCoverArtAsync()
+        {
+            var targetVideo = SelectedVideo;
+            if (targetVideo is null || !targetVideo.IsImageControlsEnabled)
+            {
+                return;
+            }
+
+            var index = targetVideo.SelectedCoverArtIndex;
+            if (index < 0 || index >= targetVideo.CoverArtImages.Count)
+            {
+                return;
+            }
+
+            var image = targetVideo.CoverArtImages[index];
+            if (image.Data.Length == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var extension = GetImageExtension(image.MimeType);
+                var picker = new FileSavePicker
+                {
+                    SuggestedStartLocation = PickerLocationId.PicturesLibrary,
+                    SuggestedFileName = BuildExportFileName(targetVideo.FileName, index, extension)
+                };
+                picker.FileTypeChoices.Add(extension[1..].ToUpperInvariant() + " image", new List<string> { extension });
+
+                if (App.MainWindow is not null)
+                {
+                    var hwnd = WindowNative.GetWindowHandle(App.MainWindow);
+                    InitializeWithWindow.Initialize(picker, hwnd);
+                }
+
+                var file = await picker.PickSaveFileAsync();
+                if (file is null)
+                {
+                    return;
+                }
+
+                await FileIO.WriteBytesAsync(file, image.Data);
+                _setSuccess(LanguageManager.GetString("Msg_CoverImageExported", file.Name));
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("埋め込み画像の書き出しに失敗しました", ex, targetVideo.FullPath);
+                _setError(LanguageManager.GetString("Msg_CoverImageExportFailed", ex.Message), ex, targetVideo.FullPath);
+            }
+        }
+
+        private static string BuildExportFileName(string videoFileName, int index, string extension)
+        {
+            var baseName = Path.GetFileNameWithoutExtension(videoFileName);
+            return $"{baseName}-cover-{index + 1}{extension}";
+        }
+
+        private static string GetImageExtension(string? mimeType)
+        {
+            return mimeType?.ToLowerInvariant() switch
+            {
+                "image/png" => ".png",
+                "image/webp" => ".webp",
+                "image/gif" => ".gif",
+                "image/bmp" => ".bmp",
+                "image/tiff" => ".tif",
+                _ => ".jpg"
+            };
+        }
+
         private async Task<VideoMetadataOperationResult> SaveWindowsPropertiesAsync(VideoFileItem item)
         {
             var changedProperties = new List<string>();
-            if (item.HasChanges(nameof(VideoFileItem.Title))) changedProperties.Add("Title");
-            if (item.HasChanges(nameof(VideoFileItem.Participants))) changedProperties.Add("Participants");
-            if (item.HasChanges(nameof(VideoFileItem.Comment))) changedProperties.Add("Comment");
-            if (item.HasChanges(nameof(VideoFileItem.Category))) changedProperties.Add("Category");
-            if (item.HasChanges(nameof(VideoFileItem.CatalogNumber))) changedProperties.Add("CatalogNumber");
-            if (item.HasChanges(nameof(VideoFileItem.Rating))) changedProperties.Add("Rating");
-            if (item.HasChanges(nameof(VideoFileItem.ContentDistributor))) changedProperties.Add("ContentDistributor");
-            if (item.HasChanges(nameof(VideoFileItem.Publisher))) changedProperties.Add("Publisher");
-            if (item.HasChanges(nameof(VideoFileItem.ReleaseDate))) changedProperties.Add("ReleaseDate");
+            if (item.HasChanges(nameof(VideoFileItem.Title))) changedProperties.Add(MetadataFieldIds.WorkTitle);
+            if (item.HasChanges(nameof(VideoFileItem.Participants))) changedProperties.Add(MetadataFieldIds.Participants);
+            if (item.HasChanges(nameof(VideoFileItem.Comment))) changedProperties.Add(MetadataFieldIds.Comment);
+            if (item.HasChanges(nameof(VideoFileItem.Category))) changedProperties.Add(MetadataFieldIds.Category);
+            if (item.HasChanges(nameof(VideoFileItem.CatalogNumber))) changedProperties.Add(MetadataFieldIds.CatalogNumber);
+            if (item.HasChanges(nameof(VideoFileItem.Rating))) changedProperties.Add(MetadataFieldIds.Rating);
+            if (item.HasChanges(nameof(VideoFileItem.ContentDistributor))) changedProperties.Add(MetadataFieldIds.Label);
+            if (item.HasChanges(nameof(VideoFileItem.Publisher))) changedProperties.Add(MetadataFieldIds.Publisher);
+            if (item.HasChanges(nameof(VideoFileItem.ReleaseDate))) changedProperties.Add(MetadataFieldIds.ReleaseDate);
             changedProperties.AddRange(item.DirtyCustomMetadataFieldIds);
 
             if (changedProperties.Count == 0)

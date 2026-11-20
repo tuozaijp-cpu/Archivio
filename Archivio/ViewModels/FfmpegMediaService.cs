@@ -5,6 +5,10 @@ namespace Archivio.ViewModels;
 
 internal sealed class FfmpegMediaService
 {
+    internal static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan CaptureFrameTimeout = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan ThumbnailSheetTimeout = TimeSpan.FromMinutes(2);
+
     public async Task<string?> FindFfmpegAsync(
         string? configuredFfprobe,
         CancellationToken cancellationToken = default)
@@ -21,46 +25,31 @@ internal sealed class FfmpegMediaService
             FileName = "where.exe",
             UseShellExecute = false,
             RedirectStandardOutput = true,
+            RedirectStandardError = true,
             CreateNoWindow = true
         };
         startInfo.ArgumentList.Add("ffmpeg.exe");
 
-        using var process = Process.Start(startInfo);
-        if (process is null)
-        {
-            return null;
-        }
-
-        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
         try
         {
-            await process.WaitForExitAsync(cancellationToken);
+            var result = await ProcessRunner.RunAsync(startInfo, DiscoveryTimeout, cancellationToken);
+            return result.StandardError.Length == 0 && result.ExitCode == 0
+                ? EncodingOutput(result.StandardOutput)
+                : null;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch (InvalidOperationException) when (process.HasExited)
-            {
-            }
-
-            await process.WaitForExitAsync();
-            await outputTask;
-            throw;
-        }
-
-        var output = await outputTask;
-        if (process.ExitCode != 0)
+        catch (FfmpegExecutionException)
         {
             return null;
         }
+        catch (FfmpegProcessStartException)
+        {
+            return null;
+        }
+    }
 
-        return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+    private static string? EncodingOutput(byte[] output)
+    {
+        return System.Text.Encoding.Default.GetString(output).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(path => path.Trim().Trim('"'))
             .FirstOrDefault(File.Exists);
     }
@@ -115,6 +104,7 @@ internal sealed class FfmpegMediaService
     {
         return ExecuteForImageAsync(
             BuildCaptureFrameStartInfo(ffmpegPath, videoPath, position),
+            CaptureFrameTimeout,
             cancellationToken);
     }
 
@@ -126,6 +116,7 @@ internal sealed class FfmpegMediaService
     {
         return ExecuteForImageAsync(
             BuildThumbnailSheetStartInfo(ffmpegPath, videoPath, duration),
+            ThumbnailSheetTimeout,
             cancellationToken);
     }
 
@@ -208,49 +199,21 @@ internal sealed class FfmpegMediaService
 
     private static async Task<byte[]> ExecuteForImageAsync(
         ProcessStartInfo startInfo,
+        TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("FFmpegを起動できませんでした。");
-        using var imageStream = new MemoryStream();
-        var outputTask = process.StandardOutput.BaseStream.CopyToAsync(imageStream, cancellationToken);
-        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        try
+        var result = await ProcessRunner.RunAsync(startInfo, timeout, cancellationToken);
+        if (result.ExitCode != 0)
         {
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch (InvalidOperationException) when (process.HasExited)
-            {
-            }
-
-            await process.WaitForExitAsync();
-            await Task.WhenAll(outputTask, errorTask);
-            throw;
+            throw new FfmpegMediaProcessingException(result.ExitCode, result.StandardError);
         }
 
-        await Task.WhenAll(outputTask, errorTask);
-        var errorText = await errorTask;
-        if (process.ExitCode != 0)
+        if (result.StandardOutput.Length == 0)
         {
-            throw new FfmpegMediaProcessingException(process.ExitCode, errorText);
+            throw new FfmpegMediaProcessingException(result.ExitCode, result.StandardError);
         }
 
-        if (imageStream.Length == 0)
-        {
-            throw new FfmpegMediaProcessingException(process.ExitCode, errorText);
-        }
-
-        return imageStream.ToArray();
+        return result.StandardOutput;
     }
 }
 
