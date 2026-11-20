@@ -1240,6 +1240,7 @@ namespace Archivio.Views
         private void MainPage_Unloaded(object sender, RoutedEventArgs e)
         {
             _playbackController.Dispose();
+            ViewModel.Dispose();
         }
 
         private void StopPlayback(bool removePlayer)

@@ -23,6 +23,7 @@ internal static class CompatibilityTestCatalog
         new("Metadata unit", "file save operation state", Program.TestFileSaveOperationState),
         new("Metadata unit", "video state compatibility facade", Program.TestVideoFileStateBoundaries),
         new("Metadata unit", "selection generation guard", Program.TestSelectionGenerationGuard),
+        new("Metadata unit", "operation coordinator lifecycle", Program.TestOperationCoordinatorLifecycle),
 
         new("MP4/MKV integration", "create isolated media fixtures", Program.CreateFixtures, true),
         new("MP4/MKV integration", "verification preserves technical information", Program.TestVerificationPreservesTechnicalInformation, true),

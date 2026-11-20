@@ -16,7 +16,7 @@ internal sealed class MainPagePlaybackController : IDisposable
     private readonly ToggleButton _coverArtToggle;
     private readonly ToggleButton _playbackToggle;
     private readonly Action _updateActionButtonStates;
-    private CancellationTokenSource? _loadCts;
+    private readonly OperationCoordinator _operations = new();
     private MediaPlayerElement? _playerElement;
     private MediaPlayer? _player;
 
@@ -93,7 +93,7 @@ internal sealed class MainPagePlaybackController : IDisposable
 
     public void Stop(bool removePlayer)
     {
-        _loadCts?.Cancel();
+        _operations.Cancel();
         _player?.Pause();
         if (_playerElement is not null) _playerElement.Source = null;
         if (removePlayer)
@@ -107,16 +107,13 @@ internal sealed class MainPagePlaybackController : IDisposable
     public void Dispose()
     {
         Stop(true);
-        _loadCts?.Dispose();
-        _loadCts = null;
+        _operations.Dispose();
     }
 
     private async Task UpdateSourceAsync()
     {
-        _loadCts?.Cancel();
-        _loadCts?.Dispose();
-        _loadCts = new CancellationTokenSource();
-        var token = _loadCts.Token;
+        var operation = _operations.Start();
+        var token = operation.Token;
         _coverArtContent.Visibility = IsPlaybackView ? Visibility.Collapsed : Visibility.Visible;
         _playbackContent.Visibility = IsPlaybackView ? Visibility.Visible : Visibility.Collapsed;
         _updateActionButtonStates();
@@ -147,7 +144,7 @@ internal sealed class MainPagePlaybackController : IDisposable
         {
             var file = await VideoFileStorageService.GetFileAsync(selectedVideo);
             token.ThrowIfCancellationRequested();
-            if (_viewModel.SelectedVideo != selectedVideo || !IsPlaybackView) return;
+            if (!operation.IsCurrent || _viewModel.SelectedVideo != selectedVideo || !IsPlaybackView) return;
             _playerElement.Source = MediaSource.CreateFromStorageFile(file);
             _updateActionButtonStates();
         }

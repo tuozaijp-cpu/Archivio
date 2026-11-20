@@ -27,9 +27,10 @@ namespace Archivio.ViewModels
         private VideoFileItem? _selectedVideo;
         private string _folderPath = string.Empty;
         private bool _isBusy;
-        private CancellationTokenSource? _loadingCts;
-        private readonly SelectionGenerationGuard _selectionGuard = new();
-        private CancellationTokenSource? _refreshCts;
+        private readonly OperationCoordinator _selectionOperations = new();
+        private readonly OperationCoordinator _refreshOperations = new();
+        private readonly OperationCoordinator _thumbnailOperations = new();
+        private readonly OperationCoordinator _busyOperations = new();
         private readonly SemaphoreSlim _metadataReadSemaphore = new(8, 8);
         private readonly SemaphoreSlim _metadataSaveSemaphore = new(1, 1);
         private readonly MetadataLoadCoordinator _metadataLoadCoordinator;
@@ -83,6 +84,7 @@ namespace Archivio.ViewModels
             _csvExportService = csvExportService;
             _settingsService = settingsService ?? new MainPageSettingsService();
             _metadataLoadCoordinator = new MetadataLoadCoordinator(_metadataReadSemaphore);
+            _busyOperations.BusyChanged += busy => IsBusy = busy;
             var settings = _settingsService.LoadSettings();
             _includeSubfolders = settings.IncludeSubfolders;
             _isThumbnailView = settings.IsThumbnailView;
@@ -122,11 +124,12 @@ namespace Archivio.ViewModels
                 },
                 onCoverArtSaved: OnCoverArtSaved,
                 coverArtExportService: coverArtExportService,
-                setSavingStatus: SetStatusProgress
+                setSavingStatus: SetStatusProgress,
+                busyOperations: _busyOperations
             );
 
             // 起動時に非同期でキャッシュのガベージコレクションを実行
-            _ = Task.Run(async () =>
+            _ = ObserveOperationAsync(Task.Run(async () =>
             {
                 try
                 {
@@ -136,10 +139,19 @@ namespace Archivio.ViewModels
                 {
                     AppLogger.Error("起動時のキャッシュGCに失敗しました", ex);
                 }
-            });
+            }));
         }
 
         public VideoDetailsViewModel Details => _details;
+
+        public void Dispose()
+        {
+            _selectionOperations.Dispose();
+            _refreshOperations.Dispose();
+            _thumbnailOperations.Dispose();
+            _busyOperations.Dispose();
+            _details.Dispose();
+        }
 
         public ObservableCollection<VideoFileItem> Videos
         {
@@ -165,7 +177,7 @@ namespace Archivio.ViewModels
 
                 if (SetProperty(ref _selectedVideo, value))
                 {
-                    var selectionVersion = _selectionGuard.Begin();
+                    var selectionOperation = _selectionOperations.Start();
                     if (_selectedVideo is not null)
                     {
                         _selectedVideo.PropertyChanged += SelectedVideo_PropertyChanged;
@@ -180,7 +192,7 @@ namespace Archivio.ViewModels
                     OnPropertyChanged(nameof(IsVideoSelected));
                     NotifySelectedVideoActionProperties();
                     OnPropertyChanged(nameof(DetailedPanelVisibility));
-                    _ = LoadSelectedVideoAsync(selectionVersion);
+                    _ = ObserveOperationAsync(LoadSelectedVideoAsync(selectionOperation));
                 }
             }
         }
@@ -411,11 +423,9 @@ namespace Archivio.ViewModels
             // 再読み込み時は外部での変更（ファイルの追加・削除・移動など）を反映するため、ファイルスキャンキャッシュをクリア
             _fileService.ClearEnumerationCache();
 
-            _refreshCts?.Cancel();
-            _refreshCts?.Dispose();
-            _refreshCts = new CancellationTokenSource();
-            var cancellationToken = _refreshCts.Token;
-            IsBusy = true;
+            var refreshOperation = _refreshOperations.Start();
+            var cancellationToken = refreshOperation.Token;
+            using var busy = _busyOperations.EnterBusy();
             HasOperationError = false;
             StatusMessage = LanguageManager.GetString("Msg_SearchingVideos");
             var refreshTimer = Stopwatch.StartNew();
@@ -509,8 +519,8 @@ namespace Archivio.ViewModels
 
                 StatusMessage = LanguageManager.GetString("Msg_LoadedVideos", items.Count);
                 AppLogger.Info($"動画一覧: 一覧表示準備完了 ({items.Count} 件, {refreshTimer.ElapsedMilliseconds} ms)", FolderPath);
-                _ = LoadThumbnailsAsync(items, cancellationToken);
-                _ = LoadRemainingDataAsync(items, cancellationToken);
+                _ = ObserveOperationAsync(LoadThumbnailsAsync(items, cancellationToken));
+                _ = ObserveOperationAsync(LoadRemainingDataAsync(items, cancellationToken));
             }
             catch (OperationCanceledException)
             {
@@ -526,20 +536,11 @@ namespace Archivio.ViewModels
                 OnPropertyChanged(nameof(CanExportCsv));
                 SetStatusError(LanguageManager.GetString("Msg_LoadFailed"), ex);
             }
-            finally
-            {
-                IsBusy = false;
-                if (_refreshCts?.Token == cancellationToken)
-                {
-                    _refreshCts.Dispose();
-                    _refreshCts = null;
-                }
-            }
         }
 
         public void CancelRefresh()
         {
-            _refreshCts?.Cancel();
+            _refreshOperations.Cancel();
         }
 
         public async Task ClearCurrentFolderCacheAsync()
@@ -552,7 +553,7 @@ namespace Archivio.ViewModels
             // キャッシュ削除前に、実行中のバックグラウンド処理（上書き保存を伴う）を確実にキャンセル
             CancelRefresh();
 
-            IsBusy = true;
+            using var busy = _busyOperations.EnterBusy();
             try
             {
                 await MetadataCacheManager.ClearCacheForFolderAsync(FolderPath);
@@ -567,10 +568,6 @@ namespace Archivio.ViewModels
             catch (Exception ex)
             {
                 SetStatusError(LanguageManager.GetString("Msg_CacheClearFailed", ex.Message), ex, FolderPath);
-            }
-            finally
-            {
-                IsBusy = false;
             }
         }
 
@@ -685,7 +682,7 @@ namespace Archivio.ViewModels
                 return;
             }
 
-            IsBusy = true;
+            using var busy = _busyOperations.EnterBusy();
             HasOperationError = false;
             StatusMessage = LanguageManager.GetString("Msg_ReMuxing");
 
@@ -727,7 +724,7 @@ namespace Archivio.ViewModels
                 });
 
                 // バックグラウンドでメタデータ読み込みとキャッシュ保存を実行
-                _ = Task.Run(async () =>
+                _ = ObserveOperationAsync(Task.Run(async () =>
                 {
                     try
                     {
@@ -745,7 +742,7 @@ namespace Archivio.ViewModels
                     {
                         AppLogger.Error("再MUXファイルのバックグラウンドメタデータ読み込みに失敗しました", ex, newFile.Path);
                     }
-                });
+                }));
 
                 SetStatusSuccess(LanguageManager.GetString("Msg_ReMuxSuccess"));
             }
@@ -770,10 +767,6 @@ namespace Archivio.ViewModels
             catch (Exception ex)
             {
                 SetStatusError(LanguageManager.GetString("Msg_ReMuxFailed", ex.Message), ex, item.FullPath);
-            }
-            finally
-            {
-                IsBusy = false;
             }
         }
 
@@ -918,7 +911,8 @@ namespace Archivio.ViewModels
                 string.Equals(video.FullPath, path, StringComparison.OrdinalIgnoreCase));
             if (item is not null)
             {
-                _ = LoadThumbnailAsync(item, Videos, CancellationToken.None);
+                var operation = _thumbnailOperations.Start();
+                _ = ObserveOperationAsync(LoadThumbnailAsync(item, Videos, operation.Token));
             }
         }
 
@@ -1184,29 +1178,25 @@ namespace Archivio.ViewModels
 
 
 
-        private async Task LoadSelectedVideoAsync(long selectionVersion)
+        private async Task LoadSelectedVideoAsync(OperationCoordinator.OperationHandle operation)
         {
-            _loadingCts?.Cancel();
-            _loadingCts = new CancellationTokenSource();
-            var cts = _loadingCts;
-
-            if (SelectedVideo is null || SelectedVideo.IsDeleted || !_selectionGuard.IsCurrent(selectionVersion))
+            if (SelectedVideo is null || SelectedVideo.IsDeleted || !operation.IsCurrent)
             {
                 return;
             }
 
             var currentVideo = SelectedVideo;
 
-            IsBusy = true;
+            using var busy = _busyOperations.EnterBusy();
             try
             {
-                cts.Token.ThrowIfCancellationRequested();
+                operation.Token.ThrowIfCancellationRequested();
 
                 // キャッシュに頼らず直接ファイルから読み込み直すために force: true を指定
-                await LoadWindowsPropertiesAsync(currentVideo, force: true, cancellationToken: cts.Token);
+                await LoadWindowsPropertiesAsync(currentVideo, force: true, cancellationToken: operation.Token);
 
-                if (!cts.IsCancellationRequested
-                    && _selectionGuard.IsCurrent(selectionVersion)
+                if (!operation.Token.IsCancellationRequested
+                    && operation.IsCurrent
                     && SelectedVideo == currentVideo)
                 {
                     await DispatcherHelper.RunOnUIThreadAsync(() =>
@@ -1222,18 +1212,18 @@ namespace Archivio.ViewModels
             catch (Exception ex)
             {
                 AppLogger.Error("選択中の動画の読み込みに失敗しました", ex, currentVideo.FullPath);
-                if (_selectionGuard.IsCurrent(selectionVersion) && SelectedVideo == currentVideo)
+                if (operation.IsCurrent && SelectedVideo == currentVideo)
                 {
                     SetStatusError(LanguageManager.GetString("Msg_SelectedLoadFailed"), ex, currentVideo.FullPath);
                 }
             }
-            finally
-            {
-                if (!cts.IsCancellationRequested)
-                {
-                    IsBusy = false;
-                }
-            }
+        }
+
+        private async Task ObserveOperationAsync(Task operation)
+        {
+            try { await operation; }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { AppLogger.Error("画面の非同期処理に失敗しました", ex, FolderPath); }
         }
 
         private async Task LoadBasicInfoAsync(VideoFileItem item)
@@ -1410,7 +1400,7 @@ namespace Archivio.ViewModels
                 item.AudioBitrate,
                 item.AudioFormat)).ToArray();
 
-            IsBusy = true;
+            using var busy = _busyOperations.EnterBusy();
             HasOperationError = false;
             try
             {
@@ -1421,10 +1411,6 @@ namespace Archivio.ViewModels
             catch (Exception ex)
             {
                 SetStatusError(LanguageManager.GetString("Msg_CsvSaveFailed", ex.Message), ex, file.Path);
-            }
-            finally
-            {
-                IsBusy = false;
             }
         }
 

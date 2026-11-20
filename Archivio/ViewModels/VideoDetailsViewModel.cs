@@ -34,10 +34,10 @@ namespace Archivio.ViewModels
         private readonly Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? _onMetadataUpdated;
         private readonly Action<string>? _onCoverArtSaved;
         private readonly CoverArtExportService _coverArtExportService;
+        private readonly OperationCoordinator _busyOperations;
 
         private VideoFileItem? _selectedVideo;
-        private CancellationTokenSource? _loadingCts;
-        private readonly SelectionGenerationGuard _selectionGuard = new();
+        private readonly OperationCoordinator _selectionOperations = new();
 
         public VideoDetailsViewModel(
             IVideoMetadataService metadataService,
@@ -50,7 +50,8 @@ namespace Archivio.ViewModels
             Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? onMetadataUpdated = null,
             Action<string>? onCoverArtSaved = null,
             Action<VideoFileItem, string>? setSavingStatus = null,
-            CoverArtExportService? coverArtExportService = null)
+            CoverArtExportService? coverArtExportService = null,
+            OperationCoordinator? busyOperations = null)
         {
             _metadataService = metadataService ?? throw new ArgumentNullException(nameof(metadataService));
             _metadataReadSemaphore = metadataReadSemaphore ?? throw new ArgumentNullException(nameof(metadataReadSemaphore));
@@ -63,6 +64,7 @@ namespace Archivio.ViewModels
             _onCoverArtSaved = onCoverArtSaved;
             _setSavingStatus = setSavingStatus ?? ((_, _) => { });
             _coverArtExportService = coverArtExportService ?? new CoverArtExportService();
+            _busyOperations = busyOperations ?? new OperationCoordinator();
         }
 
         public VideoFileItem? SelectedVideo
@@ -77,7 +79,7 @@ namespace Archivio.ViewModels
 
                 if (SetProperty(ref _selectedVideo, value))
                 {
-                    var selectionVersion = _selectionGuard.Begin();
+                    var selectionOperation = _selectionOperations.Start();
                     if (_selectedVideo is not null)
                     {
                         _selectedVideo.PropertyChanged += SelectedVideo_PropertyChanged;
@@ -87,10 +89,12 @@ namespace Archivio.ViewModels
                     OnPropertyChanged(nameof(DetailedPanelVisibility));
                     OnPropertyChanged(nameof(HasPendingChanges));
 
-                    _ = SetActiveItemAsync(value, selectionVersion);
+                    _ = ObserveSelectionTaskAsync(SetActiveItemAsync(value, selectionOperation));
                 }
             }
         }
+
+        public void Dispose() => _selectionOperations.Dispose();
 
         public bool IsVideoSelected => SelectedVideo is not null;
 
@@ -99,15 +103,11 @@ namespace Archivio.ViewModels
         public bool HasPendingChanges => SelectedVideo?.HasPendingChanges ?? false;
 
         public async Task SetActiveItemAsync(VideoFileItem? item)
-            => await SetActiveItemAsync(item, _selectionGuard.Begin());
+            => await SetActiveItemAsync(item, _selectionOperations.Start());
 
-        private async Task SetActiveItemAsync(VideoFileItem? item, long selectionVersion)
+        private async Task SetActiveItemAsync(VideoFileItem? item, OperationCoordinator.OperationHandle operation)
         {
-            _loadingCts?.Cancel();
-            _loadingCts = new CancellationTokenSource();
-            var cts = _loadingCts;
-
-            if (item is null || !_selectionGuard.IsCurrent(selectionVersion))
+            if (item is null || !operation.IsCurrent)
             {
                 return;
             }
@@ -118,16 +118,16 @@ namespace Archivio.ViewModels
                 return;
             }
 
-            _setBusy(true);
+            using var busy = _selectionOperations.EnterBusy();
             try
             {
-                cts.Token.ThrowIfCancellationRequested();
+                operation.Token.ThrowIfCancellationRequested();
 
                 // カバー画像のロード
                 await LoadCoverArtAsync(item);
 
-                if (!cts.IsCancellationRequested
-                    && _selectionGuard.IsCurrent(selectionVersion)
+                if (!operation.Token.IsCancellationRequested
+                    && operation.IsCurrent
                     && SelectedVideo == item)
                 {
                     await DispatcherHelper.RunOnUIThreadAsync(() =>
@@ -143,18 +143,18 @@ namespace Archivio.ViewModels
             catch (Exception ex)
             {
                 AppLogger.Error("選択中の動画カバー画像の読み込みに失敗しました", ex, item.FullPath);
-                if (_selectionGuard.IsCurrent(selectionVersion) && SelectedVideo == item)
+                if (operation.IsCurrent && SelectedVideo == item)
                 {
                     _setError(LanguageManager.GetString("Msg_SelectedCoverArtLoadFailed"), ex, item.FullPath);
                 }
             }
-            finally
-            {
-                if (!cts.IsCancellationRequested)
-                {
-                    _setBusy(false);
-                }
-            }
+        }
+
+        private async Task ObserveSelectionTaskAsync(Task task)
+        {
+            try { await task; }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { AppLogger.Error("選択動画の非同期処理に失敗しました", ex, SelectedVideo?.FullPath); }
         }
 
         public async Task LoadCoverArtAsync(VideoFileItem item, bool force = false)
@@ -243,7 +243,7 @@ namespace Archivio.ViewModels
             await DispatcherHelper.RunOnUIThreadAsync(targetVideo.BeginFileSaveOperation);
             try
             {
-                _setBusy(true);
+                using var busy = _busyOperations.EnterBusy();
                 _setError(string.Empty, null, null); // Clear message
                 _setSavingStatus(targetVideo, $"{targetVideo.FileName} {LanguageManager.GetString("Status_TagSaving")}");
 
@@ -324,10 +324,7 @@ namespace Archivio.ViewModels
                 {
                     await DispatcherHelper.RunOnUIThreadAsync(targetVideo.EndFileSaveOperation);
                 }
-                finally
-                {
-                    _setBusy(false);
-                }
+                finally { }
             }
         }
 
@@ -342,7 +339,7 @@ namespace Archivio.ViewModels
             await DispatcherHelper.RunOnUIThreadAsync(targetVideo.BeginFileSaveOperation);
             try
             {
-                _setBusy(true);
+                using var busy = _busyOperations.EnterBusy();
                 _setError(string.Empty, null, null); // Clear message
                 _setSavingStatus(targetVideo, $"{targetVideo.FileName} {LanguageManager.GetString("Status_ImageSaving")}");
 
@@ -392,10 +389,7 @@ namespace Archivio.ViewModels
                 {
                     await DispatcherHelper.RunOnUIThreadAsync(targetVideo.EndFileSaveOperation);
                 }
-                finally
-                {
-                    _setBusy(false);
-                }
+                finally { }
             }
         }
 

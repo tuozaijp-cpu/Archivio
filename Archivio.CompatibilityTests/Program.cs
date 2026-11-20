@@ -259,6 +259,36 @@ internal static class Program
             "a previous selection generation was still considered current");
     }
 
+    internal static void TestOperationCoordinatorLifecycle()
+    {
+        using var coordinator = new OperationCoordinator();
+        var busyChanges = new List<bool>();
+        coordinator.BusyChanged += busy => busyChanges.Add(busy);
+
+        var first = coordinator.Start();
+        using var firstBusy = coordinator.EnterBusy();
+        using var secondBusy = coordinator.EnterBusy();
+        var second = coordinator.Start();
+
+        Assert(first.Token.IsCancellationRequested, "starting a newer operation did not cancel the previous operation");
+        Assert(!first.IsCurrent && second.IsCurrent, "operation generation did not reject stale work");
+        Assert(busyChanges.Count == 1 && busyChanges[0], "busy scope was not reference counted on entry");
+
+        firstBusy.Dispose();
+        Assert(busyChanges.Count == 1, "busy state ended while a nested operation was still active");
+        secondBusy.Dispose();
+        Assert(busyChanges.Count == 2 && !busyChanges[1], "busy state did not end after the final scope");
+
+        coordinator.Cancel();
+        Assert(second.Token.IsCancellationRequested, "explicit cancellation did not cancel the active operation");
+
+        using var closingCoordinator = new OperationCoordinator();
+        var closingOperation = closingCoordinator.Start();
+        closingCoordinator.Dispose();
+        Assert(closingOperation.Token.IsCancellationRequested && !closingOperation.IsCurrent,
+            "disposing the coordinator did not cancel and invalidate screen-scoped work");
+    }
+
     internal static void TestCustomMetadataEditorValueConversion()
     {
         var multipleText = new MetadataValue();
