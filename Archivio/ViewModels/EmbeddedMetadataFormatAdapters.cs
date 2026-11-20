@@ -399,6 +399,19 @@ namespace Archivio.ViewModels
                 ? MetadataFieldCapability.ReadOnly
                 : base.GetFieldCapability(fieldId);
         }
+
+        public override void WriteMetadataDocument(
+            TagLib.File file,
+            MetadataDocument document,
+            IReadOnlyCollection<string> fieldIds)
+        {
+            throw new NotSupportedException("その他の形式はメタデータを書き込めません。");
+        }
+
+        public override void WriteArchivioMetadata(TagLib.File file, ArchivioMetadataPayload payload)
+        {
+            throw new NotSupportedException("その他の形式はArchivio独自メタデータを書き込めません。");
+        }
     }
 
     internal static class EmbeddedMetadataFormatAdapterSelector

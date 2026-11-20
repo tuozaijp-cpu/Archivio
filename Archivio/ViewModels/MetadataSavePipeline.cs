@@ -144,51 +144,21 @@ internal static class MetadataWriteExecutor
             {
                 document.PeopleAndStaff.Cast.Clear();
             }
-            adapter.WriteMetadataDocument(tagFile, document, fieldIds);
-
-            var payloadFieldsChanged = fieldIds
-                .Any(fieldId =>
-                    fieldId != MetadataFieldIds.ReleaseDate
-                    && adapter.GetFieldCapability(fieldId) == MetadataFieldCapability.ArchivioCustom);
-            var payloadChanged = false;
-            if (payloadFieldsChanged || participantsChanged)
-            {
-                var payload = ArchivioMetadataPayloadMapper.FromDocument(document);
-                var existingPayload = adapter.ReadArchivioMetadata(tagFile).Payload;
-                if (existingPayload is null)
-                {
-                    payloadChanged = payloadFieldsChanged;
-                }
-                else
-                {
-                    var existingDocument = adapter.ReadMetadataDocument(tagFile);
-                    ArchivioMetadataPayloadMapper.ApplyToDocument(existingDocument, existingPayload);
-                    var existingEffectivePayload = ArchivioMetadataPayloadMapper.FromDocument(existingDocument);
-                    payloadChanged = !string.Equals(
-                        ArchivioMetadataPayloadMapper.Serialize(payload),
-                        ArchivioMetadataPayloadMapper.Serialize(existingEffectivePayload),
-                        StringComparison.Ordinal);
-                }
-
-                if (payloadChanged)
-                {
-                    try
-                    {
-                        adapter.WriteArchivioMetadata(tagFile, payload);
-                        payloadToVerify = payload;
-                    }
-                    catch (Exception ex)
-                    {
-                        AppLogger.Error("Archivio独自メタデータの保存に失敗しました", ex, workingPath);
-                        errors.Add(ex.Message);
-                    }
-                }
-            }
+            MetadataTagWriter.Write(tagFile, adapter, document, fieldIds);
+            var payloadResult = ArchivioPayloadWriter.WriteIfChanged(
+                tagFile,
+                adapter,
+                document,
+                fieldIds,
+                participantsChanged,
+                workingPath);
+            payloadToVerify = payloadResult.Payload;
+            errors.AddRange(payloadResult.Errors);
 
             var nativeTagFieldsChanged = fieldIds.Any(fieldId =>
                 MetadataFieldIds.StandardTagIds.Contains(fieldId)
                 || fieldId is MetadataFieldIds.ReleaseDate or MetadataFieldIds.Rating);
-            if (errors.Count == 0 && (nativeTagFieldsChanged || payloadChanged))
+            if (errors.Count == 0 && (nativeTagFieldsChanged || payloadResult.Changed))
             {
                 tagFile.Save();
             }
@@ -275,103 +245,6 @@ internal static class MetadataVerificationService
 
         return actual;
     }
-}
-
-internal sealed class FileCommitService : IDisposable
-{
-    private readonly string _targetPath;
-    private readonly bool _directWrite;
-    private readonly FileVersion _originalVersion;
-    private bool _committed;
-
-    private FileCommitService(string targetPath, bool directWrite, FileVersion originalVersion, string workingPath)
-    {
-        _targetPath = targetPath;
-        _directWrite = directWrite;
-        _originalVersion = originalVersion;
-        WorkingPath = workingPath;
-    }
-
-    public string WorkingPath { get; }
-    public bool IsDirectWrite => _directWrite;
-
-    public static FileCommitService Open(string targetPath, bool directWrite)
-    {
-        var version = ReadVersion(targetPath);
-        if (directWrite)
-        {
-            return new FileCommitService(targetPath, true, version, targetPath);
-        }
-
-        var directory = Path.GetDirectoryName(targetPath);
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            throw new InvalidOperationException("対象ファイルの保存先を特定できません。");
-        }
-
-        var temporaryPath = Path.Combine(
-            directory,
-            $".{Path.GetFileNameWithoutExtension(targetPath)}.archivio-{Guid.NewGuid():N}{Path.GetExtension(targetPath)}");
-        System.IO.File.Copy(targetPath, temporaryPath, overwrite: false);
-        return new FileCommitService(targetPath, false, version, temporaryPath);
-    }
-
-    public void Commit()
-    {
-        if (_directWrite)
-        {
-            _committed = true;
-            return;
-        }
-
-        var current = ReadVersion(_targetPath);
-        if (current != _originalVersion)
-        {
-            throw new InvalidOperationException("保存中に外部アプリケーションがファイルを変更したため、上書きしませんでした。再読み込みしてください。");
-        }
-
-        System.IO.File.Replace(WorkingPath, _targetPath, null, ignoreMetadataErrors: true);
-        _committed = true;
-    }
-
-    public void Dispose()
-    {
-        if (_directWrite || _committed)
-        {
-            if (!_directWrite && System.IO.File.Exists(WorkingPath))
-            {
-                TryDelete(WorkingPath);
-            }
-            return;
-        }
-
-        TryDelete(WorkingPath);
-    }
-
-    private static FileVersion ReadVersion(string path)
-    {
-        var info = new FileInfo(path);
-        if (!info.Exists)
-        {
-            throw new FileNotFoundException("対象ファイルが存在しません。", path);
-        }
-
-        return new FileVersion(info.Length, info.LastWriteTimeUtc);
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("保存用一時ファイルの削除に失敗しました", ex, path);
-        }
-    }
-
-    private readonly record struct FileVersion(long Length, DateTime LastWriteTimeUtc);
 }
 
 internal static class MetadataSaveResultBuilder

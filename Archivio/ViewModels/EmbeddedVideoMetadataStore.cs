@@ -44,8 +44,6 @@ namespace Archivio.ViewModels
 
     internal sealed class EmbeddedVideoMetadataStore : IEmbeddedVideoMetadataStore
     {
-        private sealed record FileVersion(long Length, DateTime LastWriteTimeUtc);
-
         public Task<EmbeddedVideoMetadataLoadResult> LoadAsync(StorageFile file)
         {
             return Task.Run(() =>
@@ -169,24 +167,12 @@ namespace Archivio.ViewModels
         {
             return await Task.Run(() =>
             {
-                string? temporaryPath = null;
-                string? workingPath = null;
                 var directWriteMode = SettingsManager.LoadSettings().UseDirectFileWriteMode;
                 try
                 {
-                    var originalVersion = ReadFileVersion(file.Path);
-                    if (directWriteMode)
-                    {
-                        workingPath = file.Path;
-                    }
-                    else
-                    {
-                        temporaryPath = CreateTemporaryPath(file.Path);
-                        System.IO.File.Copy(file.Path, temporaryPath, overwrite: false);
-                        workingPath = temporaryPath;
-                    }
+                    using var commit = FileCommitService.Open(file.Path, directWriteMode);
 
-                    using (var tagFile = TagLib.File.Create(workingPath))
+                    using (var tagFile = TagLib.File.Create(commit.WorkingPath))
                     {
                         var pictures = new List<IPicture>();
                         foreach (var coverArt in coverArtImages ?? Array.Empty<CoverArtImageData>())
@@ -203,12 +189,8 @@ namespace Archivio.ViewModels
                         tagFile.Save();
                     }
                     // 一時ファイルからの読み込みを検証と保存後の表示データ生成に兼用する。
-                    var reloaded = ReadCoverArtImages(workingPath);
-                    if (!directWriteMode)
-                    {
-                        EnsureFileUnchanged(file.Path, originalVersion);
-                        CommitTemporaryFile(temporaryPath!, file.Path);
-                    }
+                    var reloaded = ReadCoverArtImages(commit.WorkingPath);
+                    commit.Commit();
                     return new VideoMetadataOperationResult
                     {
                         Succeeded = true,
@@ -226,66 +208,7 @@ namespace Archivio.ViewModels
                         Details = ex.Message
                     };
                 }
-                finally
-                {
-                    if (temporaryPath is not null)
-                    {
-                        TryDeleteTemporaryFile(temporaryPath);
-                    }
-                }
             });
-        }
-
-        private static FileVersion ReadFileVersion(string path)
-        {
-            var fileInfo = new FileInfo(path);
-            if (!fileInfo.Exists)
-            {
-                throw new FileNotFoundException("対象ファイルが存在しません。", path);
-            }
-
-            return new FileVersion(fileInfo.Length, fileInfo.LastWriteTimeUtc);
-        }
-
-        private static string CreateTemporaryPath(string path)
-        {
-            var directory = Path.GetDirectoryName(path);
-            if (string.IsNullOrWhiteSpace(directory))
-            {
-                throw new InvalidOperationException("対象ファイルの保存先を特定できません。");
-            }
-
-            return Path.Combine(directory, $".{Path.GetFileNameWithoutExtension(path)}.archivio-{Guid.NewGuid():N}{Path.GetExtension(path)}");
-        }
-
-        private static void EnsureFileUnchanged(string path, FileVersion expected)
-        {
-            var actual = ReadFileVersion(path);
-            if (actual.Length != expected.Length || actual.LastWriteTimeUtc != expected.LastWriteTimeUtc)
-            {
-                throw new InvalidOperationException("保存中に外部アプリケーションがファイルを変更したため、上書きしませんでした。再読み込みしてください。");
-            }
-        }
-
-        private static void CommitTemporaryFile(string temporaryPath, string targetPath)
-        {
-            // 一時ファイルは同一フォルダー・同一拡張子で作成し、Windowsの置換操作を使う。
-            System.IO.File.Replace(temporaryPath, targetPath, null, ignoreMetadataErrors: true);
-        }
-
-        private static void TryDeleteTemporaryFile(string path)
-        {
-            try
-            {
-                if (System.IO.File.Exists(path))
-                {
-                    System.IO.File.Delete(path);
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error("保存用一時ファイルの削除に失敗しました", ex, path);
-            }
         }
 
         private static IReadOnlyList<CoverArtImageData> ReadCoverArtImages(string path)
