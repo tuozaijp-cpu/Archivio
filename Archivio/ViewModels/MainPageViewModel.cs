@@ -37,6 +37,7 @@ namespace Archivio.ViewModels
         private readonly IVideoFileService _fileService;
         private readonly IVideoFileOperationsService _fileOperationsService;
         private readonly IVideoCsvExportService _csvExportService;
+        private readonly ISettingsService _settingsService;
         private string _statusMessage = string.Empty;
         private bool _hasOperationError;
         private bool _includeSubfolders = true;
@@ -52,16 +53,19 @@ namespace Archivio.ViewModels
         private readonly SemaphoreSlim _thumbnailReadSemaphore = new(4, 4);
         private readonly ThumbnailImageCache _thumbnailCache = new();
 
-        public MainPageViewModel() : this(
-            new VideoMetadataService(),
-            new VideoFileService(),
-            new VideoFileOperationsService(),
-            new VideoCsvExportService())
+        public MainPageViewModel() : this(ArchivioServiceFactory.Default)
+        {
+        }
+
+        internal MainPageViewModel(ArchivioServiceFactory services)
+            : this(services.MetadataService, services.FileService, services.FileOperationsService,
+                services.CsvExportService, services.SettingsService, services.CoverArtExportService)
         {
         }
 
         internal MainPageViewModel(IVideoMetadataService metadataService, IVideoFileService fileService)
-            : this(metadataService, fileService, new VideoFileOperationsService(), new VideoCsvExportService())
+            : this(metadataService, fileService, new VideoFileOperationsService(), new VideoCsvExportService(),
+                new MainPageSettingsService(), new CoverArtExportService())
         {
         }
 
@@ -69,14 +73,17 @@ namespace Archivio.ViewModels
             IVideoMetadataService metadataService,
             IVideoFileService fileService,
             IVideoFileOperationsService fileOperationsService,
-            IVideoCsvExportService csvExportService)
+            IVideoCsvExportService csvExportService,
+            ISettingsService? settingsService = null,
+            CoverArtExportService? coverArtExportService = null)
         {
             _metadataService = metadataService;
             _fileService = fileService;
             _fileOperationsService = fileOperationsService;
             _csvExportService = csvExportService;
+            _settingsService = settingsService ?? new MainPageSettingsService();
             _metadataLoadCoordinator = new MetadataLoadCoordinator(_metadataReadSemaphore);
-            var settings = SettingsManager.LoadSettings();
+            var settings = _settingsService.LoadSettings();
             _includeSubfolders = settings.IncludeSubfolders;
             _isThumbnailView = settings.IsThumbnailView;
             _thumbnailTileSizeIndex = Math.Clamp(settings.ThumbnailTileSizeIndex, 0, 3);
@@ -114,6 +121,7 @@ namespace Archivio.ViewModels
                     }
                 },
                 onCoverArtSaved: OnCoverArtSaved,
+                coverArtExportService: coverArtExportService,
                 setSavingStatus: SetStatusProgress
             );
 
@@ -353,9 +361,9 @@ namespace Archivio.ViewModels
             }
 
             FolderPath = folder.Path;
-            var settings = SettingsManager.LoadSettings();
+            var settings = _settingsService.LoadSettings();
             settings.LastFolderPath = FolderPath;
-            SettingsManager.SaveSettings(settings);
+            _settingsService.SaveSettings(settings);
 
             Videos = new ObservableCollection<VideoFileItem>();
             SelectedVideo = null;
@@ -376,9 +384,9 @@ namespace Archivio.ViewModels
                 var folder = await StorageFolder.GetFolderFromPathAsync(folderPath);
                 FolderPath = folder.Path;
 
-                var settings = SettingsManager.LoadSettings();
+                var settings = _settingsService.LoadSettings();
                 settings.LastFolderPath = FolderPath;
-                SettingsManager.SaveSettings(settings);
+                _settingsService.SaveSettings(settings);
 
                 Videos = new ObservableCollection<VideoFileItem>();
                 SelectedVideo = null;

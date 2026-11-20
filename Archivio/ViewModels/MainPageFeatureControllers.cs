@@ -130,12 +130,18 @@ public sealed class MainPageResourceController
 public sealed class MainPageFeatureControllers
 {
     public MainPageFeatureControllers(MainPageViewModel viewModel)
+        : this(viewModel, new VideoMediaController())
+    {
+    }
+
+    internal MainPageFeatureControllers(MainPageViewModel viewModel, VideoMediaController media)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
+        ArgumentNullException.ThrowIfNull(media);
         List = new VideoListController(viewModel);
         Details = new VideoDetailsController(viewModel.Details);
         FileOperations = new VideoFileOperationsController(viewModel);
-        Media = new VideoMediaController();
+        Media = media;
         Resources = new MainPageResourceController();
     }
 

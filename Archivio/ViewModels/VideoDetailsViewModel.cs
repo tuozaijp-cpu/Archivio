@@ -33,7 +33,7 @@ namespace Archivio.ViewModels
         private readonly Func<string> _getRootFolderPath;
         private readonly Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? _onMetadataUpdated;
         private readonly Action<string>? _onCoverArtSaved;
-        private readonly CoverArtExportService _coverArtExportService = new();
+        private readonly CoverArtExportService _coverArtExportService;
 
         private VideoFileItem? _selectedVideo;
         private CancellationTokenSource? _loadingCts;
@@ -49,7 +49,8 @@ namespace Archivio.ViewModels
             Func<string> getRootFolderPath,
             Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? onMetadataUpdated = null,
             Action<string>? onCoverArtSaved = null,
-            Action<VideoFileItem, string>? setSavingStatus = null)
+            Action<VideoFileItem, string>? setSavingStatus = null,
+            CoverArtExportService? coverArtExportService = null)
         {
             _metadataService = metadataService ?? throw new ArgumentNullException(nameof(metadataService));
             _metadataReadSemaphore = metadataReadSemaphore ?? throw new ArgumentNullException(nameof(metadataReadSemaphore));
@@ -61,6 +62,7 @@ namespace Archivio.ViewModels
             _onMetadataUpdated = onMetadataUpdated;
             _onCoverArtSaved = onCoverArtSaved;
             _setSavingStatus = setSavingStatus ?? ((_, _) => { });
+            _coverArtExportService = coverArtExportService ?? new CoverArtExportService();
         }
 
         public VideoFileItem? SelectedVideo

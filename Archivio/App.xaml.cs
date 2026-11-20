@@ -17,6 +17,7 @@ namespace Archivio
         private Window? window;
 
         public static Window? MainWindow { get; private set; }
+        public static ArchivioServiceFactory Services { get; } = ArchivioServiceFactory.Default;
 
         /// <summary>
         /// Initializes the singleton application object.  This is the first line of authored code
@@ -41,7 +42,7 @@ namespace Archivio
             window.ExtendsContentIntoTitleBar = false;
 
             // Load saved settings
-            var settings = SettingsManager.LoadSettings();
+            var settings = Services.SettingsService.LoadSettings();
             LanguageManager.Initialize();
 
             if (window.AppWindow.Presenter is OverlappedPresenter presenter)
@@ -65,7 +66,7 @@ namespace Archivio
             {
                 try
                 {
-                    var currentSettings = SettingsManager.LoadSettings();
+                    var currentSettings = Services.SettingsService.LoadSettings();
                     
                     // Save window size
                     currentSettings.WindowWidth = window.AppWindow.Size.Width;
@@ -81,7 +82,7 @@ namespace Archivio
                         page.SaveLayoutSettings(currentSettings);
                     }
 
-                    SettingsManager.SaveSettings(currentSettings);
+                    Services.SettingsService.SaveSettings(currentSettings);
                 }
                 catch (Exception ex)
                 {

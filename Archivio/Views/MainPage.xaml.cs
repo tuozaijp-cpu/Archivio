@@ -32,7 +32,7 @@ namespace Archivio.Views
         private bool _isRestoringLayoutSettings;
         private bool _isThumbnailSheetGenerating;
         private string? _ffmpegPath;
-        private readonly MainPageSettingsService SettingsManager = new();
+        private readonly ISettingsService SettingsManager;
         private static MetadataFieldDefinition[] ListFieldDefinitions => MetadataFieldCatalog.ListFields.ToArray();
         private static MetadataFieldDefinition[] DetailFieldDefinitions => MetadataFieldCatalog.DetailFields.ToArray();
         private readonly Dictionary<string, FrameworkElement> _detailControls = new(StringComparer.Ordinal);
@@ -42,9 +42,10 @@ namespace Archivio.Views
         public MainPage()
         {
             this.InitializeComponent();
+            SettingsManager = App.Services.SettingsService;
             var settings = SettingsManager.LoadSettings();
-            DataContext = new MainPageViewModel();
-            _featureControllers = new MainPageFeatureControllers(ViewModel);
+            DataContext = App.Services.CreateMainPageViewModel();
+            _featureControllers = App.Services.CreateFeatureControllers(ViewModel);
             _playbackController = new MainPagePlaybackController(
                 ViewModel, VideoPlaybackContent, CoverArtContent,
                 CoverArtViewToggleButton, VideoPlaybackToggleButton,
