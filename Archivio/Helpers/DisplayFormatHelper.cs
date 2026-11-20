@@ -68,9 +68,14 @@ namespace Archivio.Helpers
 
         public static string FormatOperationMessage(VideoMetadataOperationResult result)
         {
-            return string.IsNullOrWhiteSpace(result.Details)
+            var message = string.IsNullOrWhiteSpace(result.Details)
                 ? result.Message
                 : $"{result.Message}{Environment.NewLine}{result.Details}";
+            var typedError = result.Errors.FirstOrDefault();
+            if (typedError is null) return message;
+
+            var recovery = typedError.OriginalFilePreserved ? "元ファイルは保持されています。" : "元ファイルの状態を確認してください。";
+            return $"{message}{Environment.NewLine}原因: {typedError.Kind}{Environment.NewLine}対象: {typedError.TargetPath}{Environment.NewLine}{recovery}";
         }
     }
 }

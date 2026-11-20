@@ -525,7 +525,20 @@ namespace Archivio.ViewModels
                 {
                     Succeeded = false,
                     Message = LanguageManager.GetString("Msg_SaveError", ex.Message),
-                    Details = ex.Message
+                    Details = "保存処理中に予期しないエラーが発生しました。",
+                    Errors = new[]
+                    {
+                        new MetadataSaveError
+                        {
+                            Kind = MetadataSaveErrorKind.Unknown,
+                            Message = "保存処理中に予期しないエラーが発生しました。",
+                            TargetPath = item.FullPath,
+                            OriginalFilePreserved = false
+                        }
+                    },
+                    ErrorKind = MetadataSaveErrorKind.Unknown,
+                    TargetPath = item.FullPath,
+                    OriginalFilePreserved = false
                 };
             }
             finally

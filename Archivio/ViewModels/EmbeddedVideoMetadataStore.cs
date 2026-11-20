@@ -201,11 +201,20 @@ namespace Archivio.ViewModels
                 catch (Exception ex)
                 {
                     AppLogger.Error("カバー画像の保存に失敗しました", ex, file.Path);
+                    var error = MetadataSaveErrorFactory.FromException(
+                        ex,
+                        file.Path,
+                        MetadataSaveErrorKind.CommitFailed,
+                        originalFilePreserved: !directWriteMode);
                     return new VideoMetadataOperationResult
                     {
                         Succeeded = false,
                         Message = LanguageManager.GetString("Msg_CoverImageSaveFailed"),
-                        Details = ex.Message
+                        Details = ex.Message,
+                        Errors = new[] { error },
+                        ErrorKind = error.Kind,
+                        TargetPath = file.Path,
+                        OriginalFilePreserved = !directWriteMode
                     };
                 }
             });

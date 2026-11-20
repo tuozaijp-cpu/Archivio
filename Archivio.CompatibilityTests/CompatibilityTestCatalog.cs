@@ -34,6 +34,7 @@ internal static class CompatibilityTestCatalog
         new("MP4/MKV integration", "multiple cover images roundtrip", Program.TestMultipleImages, true),
         new("MP4/MKV integration", "cover art image export preserves bytes", Program.TestCoverArtExport),
         new("MP4/MKV integration", "corrupt custom payload keeps standard tags", Program.TestCorruptCustomPayload, true),
+        new("MP4/MKV integration", "typed metadata save errors", Program.TestTypedMetadataSaveErrors, true),
         new("MP4/MKV integration", "technical streams", Program.TestTechnicalStreams, true),
 
         new("Read-only formats", "other format refuses writes", Program.TestOtherFormatReadOnly, true),

@@ -111,6 +111,7 @@ internal sealed class MetadataWriteResult
 {
     public ArchivioMetadataPayload? Payload { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
+    public MetadataSaveErrorKind? ErrorKind { get; init; }
 }
 
 internal static class MetadataWriteExecutor
@@ -130,7 +131,7 @@ internal static class MetadataWriteExecutor
             if (tag is null)
             {
                 errors.Add(LanguageManager.GetString("Msg_EmbeddedTagsUnavailable"));
-                return new MetadataWriteResult { Errors = errors };
+                return new MetadataWriteResult { Errors = errors, ErrorKind = MetadataSaveErrorKind.Unknown };
             }
 
             var fieldIds = fieldsToPersist
@@ -171,7 +172,8 @@ internal static class MetadataWriteExecutor
         return new MetadataWriteResult
         {
             Payload = payloadToVerify,
-            Errors = errors
+            Errors = errors,
+            ErrorKind = errors.Count > 0 ? MetadataSaveErrorKind.Unknown : null
         };
     }
 }
@@ -254,7 +256,10 @@ internal static class MetadataSaveResultBuilder
         IReadOnlyList<string> errors,
         IReadOnlyList<string> archivioErrors,
         VideoMetadataSnapshot? reloaded,
-        bool succeeded)
+        bool succeeded,
+        string targetPath = "",
+        IReadOnlyList<MetadataSaveError>? typedErrors = null,
+        bool originalFilePreserved = true)
     {
         var capabilities = plan.Capabilities;
         if (!succeeded)
@@ -275,6 +280,15 @@ internal static class MetadataSaveResultBuilder
 
         var allErrors = plan.Warnings.Concat(archivioErrors).Concat(errors).ToList();
         var hasWarnings = plan.Warnings.Count > 0 || archivioErrors.Count > 0;
+        var resultErrors = (typedErrors ?? Array.Empty<MetadataSaveError>()).ToList();
+        resultErrors.AddRange(plan.UnsupportedFields.Select(field => new MetadataSaveError
+        {
+            Kind = MetadataSaveErrorKind.UnsupportedFormat,
+            Message = plan.Warnings.FirstOrDefault() ?? "書き込み対象外の形式または項目です。",
+            TargetPath = targetPath,
+            OriginalFilePreserved = true,
+            FieldIds = new[] { field }
+        }));
         return new VideoMetadataOperationResult
         {
             Succeeded = succeeded,
@@ -288,9 +302,60 @@ internal static class MetadataSaveResultBuilder
             UnsupportedProperties = plan.UnsupportedFields,
             FieldCapabilities = capabilities,
             ArchivioMetadataErrors = archivioErrors,
-            ReloadedMetadata = succeeded ? reloaded : null
+            ReloadedMetadata = succeeded ? reloaded : null,
+            Errors = resultErrors,
+            ErrorKind = resultErrors.FirstOrDefault()?.Kind,
+            TargetPath = targetPath,
+            OriginalFilePreserved = originalFilePreserved
         };
     }
+}
+
+internal static class MetadataSaveErrorFactory
+{
+    internal static MetadataSaveError FromException(
+        Exception exception,
+        string path,
+        MetadataSaveErrorKind fallback,
+        bool originalFilePreserved,
+        IReadOnlyList<string>? fields = null)
+    {
+        var kind = exception switch
+        {
+            OperationCanceledException => MetadataSaveErrorKind.Cancelled,
+            TimeoutException => MetadataSaveErrorKind.Timeout,
+            IOException when exception.Message.Contains("外部", StringComparison.OrdinalIgnoreCase)
+                => MetadataSaveErrorKind.ExternalModification,
+            IOException => MetadataSaveErrorKind.FileLocked,
+            UnauthorizedAccessException => MetadataSaveErrorKind.FileLocked,
+            InvalidDataException when exception.Message.Contains("Archivio", StringComparison.OrdinalIgnoreCase)
+                => MetadataSaveErrorKind.InvalidArchivioJson,
+            _ => fallback
+        };
+        return new MetadataSaveError
+        {
+            Kind = kind,
+            Message = exception.Message,
+            TargetPath = path,
+            OriginalFilePreserved = originalFilePreserved,
+            FieldIds = fields ?? Array.Empty<string>()
+        };
+    }
+
+    internal static MetadataSaveError Create(
+        MetadataSaveErrorKind kind,
+        string message,
+        string path,
+        bool originalFilePreserved,
+        IReadOnlyList<string>? fields = null)
+        => new()
+        {
+            Kind = kind,
+            Message = message,
+            TargetPath = path,
+            OriginalFilePreserved = originalFilePreserved,
+            FieldIds = fields ?? Array.Empty<string>()
+        };
 }
 
 internal static class MetadataSaveCoordinator
@@ -334,15 +399,23 @@ internal static class MetadataSaveCoordinator
                     Array.Empty<string>(),
                     Array.Empty<string>(),
                     null,
-                    succeeded: true);
+                    succeeded: true,
+                    targetPath: path);
             }
 
-            return new VideoMetadataOperationResult { Succeeded = true, Message = LanguageManager.GetString("Msg_NoChanges") };
+            return new VideoMetadataOperationResult
+            {
+                Succeeded = true,
+                Message = LanguageManager.GetString("Msg_NoChanges"),
+                TargetPath = path,
+                OriginalFilePreserved = true
+            };
         }
 
         var adapter = EmbeddedMetadataFormatAdapterSelector.Select(path);
         var errors = new List<string>();
         var archivioErrors = new List<string>();
+        var typedErrors = new List<MetadataSaveError>();
         VideoMetadataSnapshot? reloaded = null;
         var write = new MetadataWriteResult();
         try
@@ -358,6 +431,12 @@ internal static class MetadataSaveCoordinator
             if (write.Errors.Count > 0)
             {
                 errors.AddRange(write.Errors);
+                typedErrors.Add(MetadataSaveErrorFactory.Create(
+                    write.ErrorKind ?? MetadataSaveErrorKind.InvalidArchivioJson,
+                    string.Join(Environment.NewLine, write.Errors),
+                    path,
+                    originalFilePreserved: !directWrite,
+                    plan.FieldsToPersist));
             }
             else
             {
@@ -373,6 +452,14 @@ internal static class MetadataSaveCoordinator
                 catch (Exception ex)
                 {
                     errors.Add(LanguageManager.GetString("Msg_VerifyMetadataFailed", ex.Message));
+                    typedErrors.Add(MetadataSaveErrorFactory.FromException(
+                        ex,
+                        path,
+                        ex is InvalidDataException && ex.Message.Contains("Archivio", StringComparison.OrdinalIgnoreCase)
+                            ? MetadataSaveErrorKind.InvalidArchivioJson
+                            : MetadataSaveErrorKind.VerificationFailed,
+                        originalFilePreserved: !directWrite,
+                        plan.FieldsToPersist));
                 }
             }
 
@@ -382,7 +469,18 @@ internal static class MetadataSaveCoordinator
                 {
                     commit.Commit();
                 }
-                catch (Exception ex) { errors.Add(LanguageManager.GetString("Msg_SaveError", ex.Message)); }
+                catch (Exception ex)
+                {
+                    errors.Add(LanguageManager.GetString("Msg_SaveError", ex.Message));
+                    typedErrors.Add(MetadataSaveErrorFactory.FromException(
+                        ex,
+                        path,
+                        ex.Message.Contains("外部", StringComparison.OrdinalIgnoreCase)
+                            ? MetadataSaveErrorKind.ExternalModification
+                            : MetadataSaveErrorKind.CommitFailed,
+                        originalFilePreserved: !directWrite,
+                        plan.FieldsToPersist));
+                }
             }
 
             var succeeded = errors.Count == 0;
@@ -391,13 +489,22 @@ internal static class MetadataSaveCoordinator
                 errors,
                 archivioErrors,
                 reloaded,
-                succeeded);
+                succeeded,
+                path,
+                typedErrors,
+                originalFilePreserved: succeeded || !directWrite);
         }
         catch (Exception ex)
         {
             AppLogger.Error("メタデータの保存に失敗しました", ex, path);
             errors.Add(LanguageManager.GetString("Msg_SaveError", ex.Message));
-            return MetadataSaveResultBuilder.Build(plan, errors, archivioErrors, null, false);
+            typedErrors.Add(MetadataSaveErrorFactory.FromException(
+                ex,
+                path,
+                MetadataSaveErrorKind.Unknown,
+                originalFilePreserved: !directWrite,
+                plan.FieldsToPersist));
+            return MetadataSaveResultBuilder.Build(plan, errors, archivioErrors, null, false, path, typedErrors, !directWrite);
         }
     }
 }

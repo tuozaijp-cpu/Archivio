@@ -7,6 +7,28 @@ using Windows.Storage;
 
 namespace Archivio.ViewModels
 {
+    public enum MetadataSaveErrorKind
+    {
+        UnsupportedFormat,
+        ExternalModification,
+        FileLocked,
+        InvalidArchivioJson,
+        VerificationFailed,
+        CommitFailed,
+        Cancelled,
+        Timeout,
+        Unknown
+    }
+
+    public sealed class MetadataSaveError
+    {
+        public MetadataSaveErrorKind Kind { get; init; }
+        public string Message { get; init; } = string.Empty;
+        public string TargetPath { get; init; } = string.Empty;
+        public bool OriginalFilePreserved { get; init; }
+        public IReadOnlyList<string> FieldIds { get; init; } = Array.Empty<string>();
+    }
+
     public interface IVideoMetadataService
     {
         Task<VideoMetadataLoadResult> LoadMetadataAsync(StorageFile file, CancellationToken cancellationToken = default);
@@ -29,6 +51,10 @@ namespace Archivio.ViewModels
         /// <summary>保存対象項目ごとのフォーマット能力。画面表示や警告に利用できる。</summary>
         public IReadOnlyList<MetadataFieldCapabilityResult> FieldCapabilities { get; init; } = Array.Empty<MetadataFieldCapabilityResult>();
         public IReadOnlyList<string> ArchivioMetadataErrors { get; init; } = Array.Empty<string>();
+        public IReadOnlyList<MetadataSaveError> Errors { get; init; } = Array.Empty<MetadataSaveError>();
+        public MetadataSaveErrorKind? ErrorKind { get; init; }
+        public string? TargetPath { get; init; }
+        public bool OriginalFilePreserved { get; init; }
         /// <summary>保存後にファイルから再読み込みした実データ。</summary>
         public VideoMetadataSnapshot? ReloadedMetadata { get; init; }
         /// <summary>カバー画像保存後にファイルから再読み込みした実データ。</summary>

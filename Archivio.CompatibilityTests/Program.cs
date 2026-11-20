@@ -766,6 +766,9 @@ internal static class Program
         changed.Title = "Should not be written";
         var result = store.SaveAsync(file, changed, before, new[] { "Title" }).GetAwaiter().GetResult();
         Assert(result.Succeeded && result.HasWarnings && result.UnsupportedProperties.Contains("work.title"), "unsupported result was not reported");
+        Assert(result.ErrorKind == MetadataSaveErrorKind.UnsupportedFormat
+            && result.Errors.Any(error => error.Kind == MetadataSaveErrorKind.UnsupportedFormat),
+            "unsupported format was not represented as a typed result");
         Assert(beforeBytes.SequenceEqual(IoFile.ReadAllBytes(path)), "read-only format bytes changed");
         Assert(store.LoadAsync(file).GetAwaiter().GetResult().Metadata.Title == "Existing audio title", "existing tag could not be read");
     }
@@ -811,6 +814,36 @@ internal static class Program
         var result = new EmbeddedVideoMetadataStore().LoadAsync(GetStorageFile(path)).GetAwaiter().GetResult();
         Assert(result.Metadata.Title == "Still readable", "standard tags were lost on corrupt custom JSON");
         Assert(!string.IsNullOrWhiteSpace(result.ArchivioMetadataError), "corruption was not reported");
+    }
+
+    internal static void TestTypedMetadataSaveErrors()
+    {
+        var path = Path.Combine(_root, "typed-error.mp4");
+        var invalidJson = MetadataSaveErrorFactory.FromException(
+            new InvalidDataException("Archivio独自メタデータが不正です。"),
+            path,
+            MetadataSaveErrorKind.VerificationFailed,
+            originalFilePreserved: true);
+        Assert(invalidJson.Kind == MetadataSaveErrorKind.InvalidArchivioJson
+            && invalidJson.TargetPath == path
+            && invalidJson.OriginalFilePreserved,
+            "invalid Archivio JSON was not classified with recovery information");
+
+        var external = MetadataSaveErrorFactory.FromException(
+            new IOException("外部アプリケーションがファイルを変更しました。"),
+            path,
+            MetadataSaveErrorKind.CommitFailed,
+            originalFilePreserved: true);
+        Assert(external.Kind == MetadataSaveErrorKind.ExternalModification,
+            "external modification was not classified as a typed save error");
+
+        var locked = MetadataSaveErrorFactory.FromException(
+            new IOException("ファイルを使用中です。"),
+            path,
+            MetadataSaveErrorKind.CommitFailed,
+            originalFilePreserved: true);
+        Assert(locked.Kind == MetadataSaveErrorKind.FileLocked,
+            "file lock was not classified as a typed save error");
     }
 
     internal static void TestTechnicalStreams()
