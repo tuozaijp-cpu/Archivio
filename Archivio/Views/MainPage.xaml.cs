@@ -1503,7 +1503,7 @@ namespace Archivio.Views
                     return;
                 }
 
-                var file = await targetVideo.GetFileAsync();
+                var file = await VideoFileStorageService.GetFileAsync(targetVideo);
                 cancellationToken.ThrowIfCancellationRequested();
                 var data = await _ffmpegMediaService.CaptureFrameAsync(
                     ffmpegPath,
@@ -1558,7 +1558,7 @@ namespace Archivio.Views
                     return;
                 }
 
-                var file = await targetVideo.GetFileAsync();
+                var file = await VideoFileStorageService.GetFileAsync(targetVideo);
                 var duration = targetVideo.DurationValue
                     ?? targetVideo.TechnicalInfo.Duration
                     ?? TimeSpan.Zero;
@@ -1728,7 +1728,7 @@ namespace Archivio.Views
         {
             if (ViewModel.SelectedVideo is not null)
             {
-                var file = await ViewModel.SelectedVideo.GetFileAsync();
+                var file = await VideoFileStorageService.GetFileAsync(ViewModel.SelectedVideo);
                 await Windows.System.Launcher.LaunchFileAsync(file);
             }
         }
@@ -1878,7 +1878,7 @@ namespace Archivio.Views
             try
             {
                 var selectedVideo = ViewModel.SelectedVideo;
-                var file = await selectedVideo.GetFileAsync();
+                var file = await VideoFileStorageService.GetFileAsync(selectedVideo);
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (ViewModel.SelectedVideo != selectedVideo || !_isPlaybackView)
@@ -1915,7 +1915,7 @@ namespace Archivio.Views
         {
             if (ViewModel.SelectedVideo is not null)
             {
-                var file = await ViewModel.SelectedVideo.GetFileAsync();
+                var file = await VideoFileStorageService.GetFileAsync(ViewModel.SelectedVideo);
                 await Windows.System.Launcher.LaunchFileAsync(file);
             }
         }

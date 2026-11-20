@@ -33,6 +33,7 @@ internal static class Program
             Run("thumbnail cache overwrite remove clear and retain", TestThumbnailCacheMutation);
             Run("metadata loading coordinator retries and cancels", TestMetadataLoadCoordinator);
             Run("file save operation state is reference counted", TestFileSaveOperationState);
+            Run("video file state boundaries and compatibility facade", TestVideoFileStateBoundaries);
             Run("FFmpeg playback commands and executable discovery", TestFfmpegMediaService);
             Run("FFmpeg process runner lifecycle", TestProcessRunner);
             Run("metadata field format capabilities", TestMetadataFieldFormatCapabilities);
@@ -232,6 +233,29 @@ internal static class Program
         item.EndFileSaveOperation();
         Assert(!item.IsFileSaveInProgress, "file save state did not return to inactive");
         Assert(stateNotifications == 2, "ending the final save did not notify state change");
+    }
+
+    private static void TestVideoFileStateBoundaries()
+    {
+        var item = new VideoFileItem("state-test.mp4");
+        Assert(item.FileInfoState.FullPath == "state-test.mp4" && item.FileInfoState.FileName == "state-test.mp4",
+            "file information state was not initialized without StorageFile");
+
+        item.FileSizeBytes = 123;
+        item.CoverArtImages = new List<CoverArtImageData>
+        {
+            new() { Data = [1, 2, 3], MimeType = "image/jpeg" }
+        };
+        item.IsCoverArtDirty = true;
+        item.MarkCustomMetadataFieldChanged("custom.stable-id");
+
+        Assert(item.FileInfoState.FileSizeBytes == 123, "file information state did not track the compatibility property");
+        Assert(item.CoverArtState.Images.Count == 1 && item.CoverArtState.IsDirty,
+            "cover art state did not track binary image state");
+        Assert(item.ChangeTrackingState.DirtyCustomFieldIds.Contains("custom.stable-id"),
+            "change tracking state did not retain the stable field ID");
+        Assert(item.CoverArtState.Images.All(image => image.Data is not null),
+            "cover art state contains invalid image data");
     }
 
     private static void TestCustomMetadataEditorValueConversion()

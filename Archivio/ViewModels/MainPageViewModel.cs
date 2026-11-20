@@ -566,7 +566,7 @@ namespace Archivio.ViewModels
 
         public async Task RenameVideoAsync(VideoFileItem item, string newName)
         {
-            var file = await item.GetFileAsync();
+            var file = await VideoFileStorageService.GetFileAsync(item);
             if (string.IsNullOrWhiteSpace(newName) || newName == file.Name)
             {
                 return;
@@ -578,7 +578,7 @@ namespace Archivio.ViewModels
             try
             {
                 await _fileOperationsService.RenameAsync(file, newName);
-                item.SyncFromStorageFile();
+                item.UpdatePath(file.Path);
 
                 // キャッシュの更新
                 try
@@ -616,7 +616,7 @@ namespace Archivio.ViewModels
             }
             catch (Exception ex)
             {
-                item.SyncFromStorageFile();
+                item.UpdatePath(file.Path);
                 SetStatusError(LanguageManager.GetString("Msg_RenameFailed", ex.Message), ex, item.FullPath);
             }
         }
@@ -628,7 +628,7 @@ namespace Archivio.ViewModels
                 return;
             }
 
-            var file = await item.GetFileAsync();
+            var file = await VideoFileStorageService.GetFileAsync(item);
             var pathToRemove = item.FullPath;
 
             HasOperationError = false;
@@ -682,9 +682,9 @@ namespace Archivio.ViewModels
             try
             {
                 // 新しく作成されたファイルを直接ロードして挿入する
-                var sourceFile = await item.GetFileAsync();
+                var sourceFile = await VideoFileStorageService.GetFileAsync(item);
                 var newFile = await _fileOperationsService.ReMuxAsync(sourceFile);
-                var newItem = new VideoFileItem(newFile);
+                var newItem = new VideoFileItem(newFile.Path);
 
                 // 基本情報のロード
                 await LoadBasicInfoAsync(newItem);
@@ -1021,7 +1021,7 @@ namespace Archivio.ViewModels
                     return;
                 }
 
-                var file = await item.GetFileAsync();
+                var file = await VideoFileStorageService.GetFileAsync(item);
                 var coverArt = await _metadataService.LoadThumbnailImageAsync(file, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -1283,7 +1283,7 @@ namespace Archivio.ViewModels
 
                     var loadResult = await _metadataLoadCoordinator.LoadWithRetryAsync(async token =>
                     {
-                        var file = await item.GetFileAsync();
+                        var file = await VideoFileStorageService.GetFileAsync(item);
                         return await _metadataService.LoadMetadataAsync(file, token);
                     }, ct);
 

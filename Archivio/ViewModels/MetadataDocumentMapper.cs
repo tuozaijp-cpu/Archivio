@@ -16,7 +16,7 @@ namespace Archivio.ViewModels
             ArgumentNullException.ThrowIfNull(item);
             var document = FromSnapshot(item.CreateCurrentMetadataSnapshot());
 
-            document.Artwork.Assets = item.CoverArtImages
+            document.Artwork.Assets = item.CoverArtState.Images
                 .Select((image, index) => new ArtworkAsset
                 {
                     Data = image.Data.ToArray(),

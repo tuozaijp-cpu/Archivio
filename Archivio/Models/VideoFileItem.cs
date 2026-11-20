@@ -8,32 +8,40 @@ using Archivio.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Imaging;
 using TagLib;
-using Windows.Storage;
-using System.Threading.Tasks;
 
 namespace Archivio.Models
 {
     public sealed class VideoFileItem : ViewModelBase
     {
-        private readonly HashSet<string> _dirtyCustomMetadataFieldIds = new(StringComparer.Ordinal);
+        /// <summary>ドメイン状態。既存のフラットな公開プロパティは互換ファサードとして維持する。</summary>
+        private readonly VideoFileInfoState _fileInfoState = new();
+        private readonly VideoMetadataState _metadataState = new();
+        private readonly VideoTechnicalState _technicalState = new();
+        private readonly VideoCoverArtState _coverArtState = new();
+        private readonly VideoChangeTrackingState _changeTrackingState = new();
         private string _originalStructuredMetadataJson = string.Empty;
         private MetadataDocument _originalStructuredMetadata = new();
-        private MetadataDocument _structuredMetadata = new();
         private int _activeFileSaveOperationCount;
+
+        public VideoFileInfoState FileInfoState => _fileInfoState;
+        public VideoMetadataState MetadataState => _metadataState;
+        public VideoTechnicalState TechnicalState => _technicalState;
+        public VideoCoverArtState CoverArtState => _coverArtState;
+        public VideoChangeTrackingState ChangeTrackingState => _changeTrackingState;
 
         /// <summary>動画ファイルから読み込んだArchivio共通メタデータ。既存プロパティとの互換用に併存する。</summary>
         public MetadataDocument StructuredMetadata
         {
-            get => _structuredMetadata;
+            get => _metadataState.StructuredMetadata;
             set
             {
                 var next = value ?? new MetadataDocument();
-                if (ReferenceEquals(_structuredMetadata, next))
+                if (ReferenceEquals(_metadataState.StructuredMetadata, next))
                 {
                     return;
                 }
 
-                _structuredMetadata = next;
+                _metadataState.StructuredMetadata = next;
                 OnPropertyChanged();
                 // 一覧・詳細画面はこのプロパティ配下の値へバインドしているため、
                 // 保存後のファイル再読込時に親プロパティの変更を通知する。
@@ -42,11 +50,12 @@ namespace Archivio.Models
             }
         }
         /// <summary>FFprobe等で取得した全ストリームの技術情報。保存対象外。</summary>
-        public VideoTechnicalInfo TechnicalInfo { get; private set; } = new();
+        public VideoTechnicalInfo TechnicalInfo => _technicalState.Info;
 
         public void SetTechnicalInfo(VideoTechnicalInfo value)
         {
-            TechnicalInfo = value ?? new VideoTechnicalInfo();
+            _technicalState.Info = value ?? new VideoTechnicalInfo();
+            _metadataState.TechnicalInfo = _technicalState.Info;
             OnPropertyChanged(nameof(TechnicalInfo));
         }
 
@@ -112,7 +121,7 @@ namespace Archivio.Models
             }
         }
 
-        public IReadOnlyCollection<string> DirtyCustomMetadataFieldIds => _dirtyCustomMetadataFieldIds;
+        public IReadOnlyCollection<string> DirtyCustomMetadataFieldIds => _changeTrackingState.DirtyCustomFieldIds;
 
         public bool IsFileSaveInProgress => Volatile.Read(ref _activeFileSaveOperationCount) > 0;
 
@@ -142,13 +151,13 @@ namespace Archivio.Models
         public void MarkCustomMetadataFieldChanged(string fieldId)
         {
             if (string.IsNullOrWhiteSpace(fieldId)) return;
-            _dirtyCustomMetadataFieldIds.Add(fieldId);
+            _changeTrackingState.DirtyCustomFieldIds.Add(fieldId);
             HasPendingChangesNotify();
         }
 
         public void ResetCustomMetadataChanges()
         {
-            _dirtyCustomMetadataFieldIds.Clear();
+            _changeTrackingState.DirtyCustomFieldIds.Clear();
             HasPendingChangesNotify();
         }
 
@@ -186,42 +195,24 @@ namespace Archivio.Models
         private bool _thumbnailLoadFailed;
         private bool _isDeleted;
         private int _selectedCoverArtIndex;
-        private int _originalPictureBytesCount;
-        private int _originalPictureBytesHash;
-        private List<CoverArtImageData> _coverArtImages = new();
         private Dictionary<string, string> _originalValues = new(StringComparer.OrdinalIgnoreCase);
         private string _fileName = string.Empty;
         private string _fullPath = string.Empty;
 
-        public VideoFileItem(StorageFile file)
-        {
-            _file = file;
-            _fileName = file.Name;
-            _fullPath = file.Path;
-        }
-
         public VideoFileItem(string path)
         {
-            _fullPath = path;
-            _fileName = System.IO.Path.GetFileName(path);
-        }
-
-        private StorageFile? _file;
-
-        public StorageFile? File => _file;
-
-        public async Task<StorageFile> GetFileAsync()
-        {
-            return _file ??= await StorageFile.GetFileFromPathAsync(_fullPath);
+            _fileInfoState.FullPath = _fullPath = path;
+            _fileInfoState.FileName = _fileName = System.IO.Path.GetFileName(path);
         }
 
         public string FileName
         {
-            get => _fileName;
+            get => _fileInfoState.FileName;
             set
             {
                 if (SetProperty(ref _fileName, value))
                 {
+                    _fileInfoState.FileName = value;
                     OnPropertyChanged(nameof(DisplayTitle));
                 }
             }
@@ -249,35 +240,50 @@ namespace Archivio.Models
 
         public string FullPath
         {
-            get => _fullPath;
-            private set => SetProperty(ref _fullPath, value);
+            get => _fileInfoState.FullPath;
+            private set
+            {
+                if (SetProperty(ref _fullPath, value))
+                {
+                    _fileInfoState.FullPath = value;
+                }
+            }
         }
 
-        public void SyncFromStorageFile()
+        public void UpdatePath(string path)
         {
-            if (_file is null) return;
-            _fileName = _file.Name;
-            FullPath = _file.Path;
+            _fileName = System.IO.Path.GetFileName(path);
+            _fileInfoState.FileName = _fileName;
+            FullPath = path;
             OnPropertyChanged(nameof(FileName));
             OnPropertyChanged(nameof(DisplayTitle));
         }
 
         public ulong FileSizeBytes
         {
-            get => _fileSizeBytes;
-            set => SetProperty(ref _fileSizeBytes, value);
+            get => _fileInfoState.FileSizeBytes;
+            set
+            {
+                if (SetProperty(ref _fileSizeBytes, value)) _fileInfoState.FileSizeBytes = value;
+            }
         }
 
         public string FileSizeText
         {
-            get => _fileSizeText;
-            set => SetProperty(ref _fileSizeText, value);
+            get => _fileInfoState.FileSizeText;
+            set
+            {
+                if (SetProperty(ref _fileSizeText, value)) _fileInfoState.FileSizeText = value;
+            }
         }
 
         public TimeSpan? DurationValue
         {
             get => _durationValue;
-            set => SetProperty(ref _durationValue, value);
+            set
+            {
+                if (SetProperty(ref _durationValue, value)) _metadataState.DurationValue = value;
+            }
         }
 
         public VideoMetadataSnapshot CreateCurrentMetadataSnapshot()
@@ -348,8 +354,11 @@ namespace Archivio.Models
 
         public bool IsCoverArtLoaded
         {
-            get => _isCoverArtLoaded;
-            set => SetProperty(ref _isCoverArtLoaded, value);
+            get => _coverArtState.IsLoaded;
+            set
+            {
+                if (SetProperty(ref _isCoverArtLoaded, value)) _coverArtState.IsLoaded = value;
+            }
         }
 
         public string Title
@@ -359,6 +368,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _title, value))
                 {
+                    _metadataState.Title = value;
                     OnPropertyChanged(nameof(DisplayTitle));
                     UpdateChangeState(nameof(Title), value);
                 }
@@ -372,6 +382,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _participants, value))
                 {
+                    _metadataState.Participants = value;
                     OnPropertyChanged(nameof(DisplayParticipants));
                     UpdateChangeState(nameof(Participants), value);
                 }
@@ -385,6 +396,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _category, value))
                 {
+                    _metadataState.Category = value;
                     UpdateChangeState(nameof(Category), value);
                 }
             }
@@ -397,6 +409,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _comment, value))
                 {
+                    _metadataState.Comment = value;
                     UpdateChangeState(nameof(Comment), value);
                 }
             }
@@ -409,6 +422,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _catalogNumber, value))
                 {
+                    _metadataState.CatalogNumber = value;
                     UpdateChangeState(nameof(CatalogNumber), value);
                 }
             }
@@ -421,6 +435,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _rating, value))
                 {
+                    _metadataState.Rating = value;
                     UpdateChangeState(nameof(Rating), value);
                     OnPropertyChanged(nameof(RatingStarsIndex));
                     OnPropertyChanged(nameof(RatingStarsText));
@@ -502,6 +517,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _contentDistributor, value))
                 {
+                    _metadataState.ContentDistributor = value;
                     UpdateChangeState(nameof(ContentDistributor), value);
                 }
             }
@@ -514,6 +530,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _publisher, value))
                 {
+                    _metadataState.Publisher = value;
                     UpdateChangeState(nameof(Publisher), value);
                 }
             }
@@ -526,6 +543,7 @@ namespace Archivio.Models
             {
                 if (SetProperty(ref _duration, value))
                 {
+                    _metadataState.Duration = value;
                     DurationValue = DisplayFormatHelper.TryParseDuration(value);
                 }
             }
@@ -534,55 +552,55 @@ namespace Archivio.Models
         public string FrameWidth
         {
             get => _frameWidth;
-            set => SetProperty(ref _frameWidth, value);
+            set { if (SetProperty(ref _frameWidth, value)) _metadataState.FrameWidth = value; }
         }
 
         public string FrameHeight
         {
             get => _frameHeight;
-            set => SetProperty(ref _frameHeight, value);
+            set { if (SetProperty(ref _frameHeight, value)) _metadataState.FrameHeight = value; }
         }
 
         public string FrameRate
         {
             get => _frameRate;
-            set => SetProperty(ref _frameRate, value);
+            set { if (SetProperty(ref _frameRate, value)) _metadataState.FrameRate = value; }
         }
 
         public string VideoBitrate
         {
             get => _videoBitrate;
-            set => SetProperty(ref _videoBitrate, value);
+            set { if (SetProperty(ref _videoBitrate, value)) _metadataState.VideoBitrate = value; }
         }
 
         public string VideoCompression
         {
             get => _videoCompression;
-            set => SetProperty(ref _videoCompression, value);
+            set { if (SetProperty(ref _videoCompression, value)) _metadataState.VideoCompression = value; }
         }
 
         public string AudioSampleRate
         {
             get => _audioSampleRate;
-            set => SetProperty(ref _audioSampleRate, value);
+            set { if (SetProperty(ref _audioSampleRate, value)) _metadataState.AudioSampleRate = value; }
         }
 
         public string AudioBitrate
         {
             get => _audioBitrate;
-            set => SetProperty(ref _audioBitrate, value);
+            set { if (SetProperty(ref _audioBitrate, value)) _metadataState.AudioBitrate = value; }
         }
 
         public string AudioFormat
         {
             get => _audioFormat;
-            set => SetProperty(ref _audioFormat, value);
+            set { if (SetProperty(ref _audioFormat, value)) _metadataState.AudioFormat = value; }
         }
 
         public string ReleaseDateText
         {
             get => _releaseDateText;
-            set => SetProperty(ref _releaseDateText, value);
+            set { if (SetProperty(ref _releaseDateText, value)) _metadataState.ReleaseDateText = value; }
         }
 
         public DateTimeOffset ReleaseDate
@@ -593,6 +611,7 @@ namespace Archivio.Models
                 var normalizedDate = value.Date;
                 if (SetProperty(ref _releaseDate, normalizedDate))
                 {
+                    _metadataState.ReleaseDate = normalizedDate;
                     _releaseDateText = DisplayFormatHelper.FormatReleaseDateDisplayText(normalizedDate);
                     OnPropertyChanged(nameof(ReleaseDateText));
                     UpdateChangeState(nameof(ReleaseDate), normalizedDate.ToString("yyyy-MM-dd"));
@@ -667,11 +686,12 @@ namespace Archivio.Models
 
         public bool HasCoverArt
         {
-            get => _hasCoverArt;
+            get => _coverArtState.HasCoverArt;
             set
             {
                 if (SetProperty(ref _hasCoverArt, value))
                 {
+                    _coverArtState.HasCoverArt = value;
                     NotifyCoverArtPropertiesChanged();
                 }
             }
@@ -679,11 +699,12 @@ namespace Archivio.Models
 
         public int SelectedCoverArtIndex
         {
-            get => _selectedCoverArtIndex;
+            get => _coverArtState.SelectedIndex;
             set
             {
                 if (SetProperty(ref _selectedCoverArtIndex, value))
                 {
+                    _coverArtState.SelectedIndex = value;
                     OnPropertyChanged(nameof(IsImageControlsEnabled));
                 }
             }
@@ -691,17 +712,18 @@ namespace Archivio.Models
 
         public List<CoverArtImageData> CoverArtImages
         {
-            get => _coverArtImages;
-            set => _coverArtImages = value;
+            get => _coverArtState.Images;
+            set => _coverArtState.Images = value ?? new();
         }
 
         public bool IsCoverArtDirty
         {
-            get => _isCoverArtDirty;
+            get => _coverArtState.IsDirty;
             set
             {
                 if (SetProperty(ref _isCoverArtDirty, value))
                 {
+                    _coverArtState.IsDirty = value;
                     OnPropertyChanged(nameof(HasCoverArtChangesNotify));
                 }
             }
@@ -709,8 +731,11 @@ namespace Archivio.Models
 
         public bool IsDeleted
         {
-            get => _isDeleted;
-            set => SetProperty(ref _isDeleted, value);
+            get => _fileInfoState.IsDeleted;
+            set
+            {
+                if (SetProperty(ref _isDeleted, value)) _fileInfoState.IsDeleted = value;
+            }
         }
 
         public bool IsImageControlsEnabled => HasCoverArt && SelectedCoverArtIndex >= 0 && SelectedCoverArtIndex < CoverArts.Count;
@@ -734,8 +759,8 @@ namespace Archivio.Models
         public bool HasCoverArtChanges()
         {
             return IsCoverArtDirty
-                || _coverArtImages.Count != _originalPictureBytesCount
-                || CalculatePictureBytesHash(_coverArtImages) != _originalPictureBytesHash;
+                || CoverArtImages.Count != _coverArtState.OriginalImageCount
+                || CalculatePictureBytesHash(CoverArtImages) != _coverArtState.OriginalImageHash;
         }
 
         public bool HasCoverArtChangesNotify => HasCoverArtChanges();
@@ -744,7 +769,7 @@ namespace Archivio.Models
 
         public bool HasMetadataChanges()
         {
-            return _dirtyCustomMetadataFieldIds.Count > 0
+            return _changeTrackingState.DirtyCustomFieldIds.Count > 0
                 || !MetadataChangeComparer.AreEquivalent(
                     CreateCurrentMetadataSnapshot(),
                     CreateOriginalMetadataSnapshot());
@@ -780,8 +805,8 @@ namespace Archivio.Models
 
         public void ResetCoverArtChangeTracking()
         {
-            _originalPictureBytesCount = _coverArtImages.Count;
-            _originalPictureBytesHash = CalculatePictureBytesHash(_coverArtImages);
+            _coverArtState.OriginalImageCount = CoverArtImages.Count;
+            _coverArtState.OriginalImageHash = CalculatePictureBytesHash(CoverArtImages);
             IsCoverArtDirty = false;
             HasPendingChangesNotify();
         }

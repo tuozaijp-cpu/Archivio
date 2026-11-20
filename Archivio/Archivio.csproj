@@ -9,6 +9,8 @@
         <UseWinUI>true</UseWinUI>
         <EnableMsixTooling>true</EnableMsixTooling>
         <WindowsPackageType>None</WindowsPackageType>
+        <!-- Include Windows App Runtime components in published output. -->
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
 
         <!-- Project Options -->
         <Nullable>enable</Nullable>

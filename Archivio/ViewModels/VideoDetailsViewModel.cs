@@ -157,7 +157,7 @@ namespace Archivio.ViewModels
                     return;
                 }
 
-                var file = await item.GetFileAsync();
+                var file = await VideoFileStorageService.GetFileAsync(item);
                 var imagesData = (await _metadataService.LoadCoverArtImagesAsync(file)).ToList();
 
                 if (imagesData.Count > 0)
@@ -238,7 +238,7 @@ namespace Archivio.ViewModels
                 _setSavingStatus(targetVideo, $"{targetVideo.FileName} {LanguageManager.GetString("Status_TagSaving")}");
 
                 // キャッシュに頼らず、再度ファイルから直接メタデータを読み込む
-                var targetFile = await targetVideo.GetFileAsync();
+                var targetFile = await VideoFileStorageService.GetFileAsync(targetVideo);
                 var loadResult = await _metadataService.LoadMetadataAsync(targetFile);
                 if (loadResult != null && loadResult.Metadata != null)
                 {
@@ -485,7 +485,7 @@ namespace Archivio.ViewModels
                 var metadata = item.CreateCurrentMetadataSnapshot();
                 var originalMetadata = item.CreateOriginalMetadataSnapshot();
 
-                var file = await item.GetFileAsync();
+                var file = await VideoFileStorageService.GetFileAsync(item);
                 var result = await _metadataService.SaveMetadataAsync(file, metadata, originalMetadata, changedProperties);
                 if (result.Succeeded && result.ReloadedMetadata is not null)
                 {
@@ -535,7 +535,7 @@ namespace Archivio.ViewModels
             await _metadataSaveSemaphore.WaitAsync();
             try
             {
-                var file = await item.GetFileAsync();
+                var file = await VideoFileStorageService.GetFileAsync(item);
                 var result = await _metadataService.SaveCoverArtAsync(file, item.CoverArtImages);
                 if (result.Succeeded)
                 {
