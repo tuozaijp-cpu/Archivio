@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using Archivio.Controls;
 using Archivio.Models;
 using Archivio.ViewModels;
@@ -34,17 +32,23 @@ namespace Archivio.Views
         private bool _isRestoringLayoutSettings;
         private bool _isThumbnailSheetGenerating;
         private string? _ffmpegPath;
-        private readonly VideoMediaProcessingService _ffmpegMediaService = new();
         private readonly MainPageSettingsService SettingsManager = new();
         private static MetadataFieldDefinition[] ListFieldDefinitions => MetadataFieldCatalog.ListFields.ToArray();
         private static MetadataFieldDefinition[] DetailFieldDefinitions => MetadataFieldCatalog.DetailFields.ToArray();
         private readonly Dictionary<string, FrameworkElement> _detailControls = new(StringComparer.Ordinal);
+        private MainPageFeatureControllers _featureControllers = null!;
+        private MainPagePlaybackController _playbackController = null!;
 
         public MainPage()
         {
             this.InitializeComponent();
             var settings = SettingsManager.LoadSettings();
             DataContext = new MainPageViewModel();
+            _featureControllers = new MainPageFeatureControllers(ViewModel);
+            _playbackController = new MainPagePlaybackController(
+                ViewModel, VideoPlaybackContent, CoverArtContent,
+                CoverArtViewToggleButton, VideoPlaybackToggleButton,
+                UpdateActionButtonStates);
             BuildDynamicEditableFields();
             RegisterDetailControls();
             BuildDynamicTechnicalFields();
@@ -176,33 +180,15 @@ namespace Archivio.Views
             try
             {
                 LanguageMenu.Items.Clear();
-                var localeDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "Locale");
-                if (Directory.Exists(localeDir))
+                foreach (var language in _featureControllers.Resources.GetLanguages())
                 {
-                    var files = Directory.GetFiles(localeDir, "*.json");
-                    foreach (var file in files)
+                    var menuItem = new MenuFlyoutItem
                     {
-                        var langCode = Path.GetFileNameWithoutExtension(file);
-                        string langName = langCode;
-                        try
-                        {
-                            var json = File.ReadAllText(file);
-                            using var doc = JsonDocument.Parse(json);
-                            if (doc.RootElement.TryGetProperty("LanguageName", out var prop))
-                            {
-                                langName = prop.GetString() ?? langCode;
-                            }
-                        }
-                        catch { }
-
-                        var menuItem = new MenuFlyoutItem
-                        {
-                            Text = langName,
-                            Tag = langCode
-                        };
-                        menuItem.Click += LanguageMenu_Click;
-                        LanguageMenu.Items.Add(menuItem);
-                    }
+                        Text = language.DisplayName,
+                        Tag = language.Code
+                    };
+                    menuItem.Click += LanguageMenu_Click;
+                    LanguageMenu.Items.Add(menuItem);
                 }
             }
             catch (Exception ex)
@@ -476,7 +462,7 @@ namespace Archivio.Views
                 ViewModel.RefreshLocalizedText();
 
                 // Refresh videos list so column contents and statuses refresh
-                _ = ViewModel.RefreshFilesAsync();
+                _ = _featureControllers.List.RefreshAsync();
             }
         }
 
@@ -1252,10 +1238,7 @@ namespace Archivio.Views
 
         private void MainPage_Unloaded(object sender, RoutedEventArgs e)
         {
-            _playbackLoadCts?.Cancel();
-            _playbackLoadCts?.Dispose();
-            _playbackLoadCts = null;
-            StopPlayback(removePlayer: true);
+            _playbackController.Dispose();
         }
 
         private void StopPlayback(bool removePlayer)
@@ -1291,12 +1274,12 @@ namespace Archivio.Views
 
         private async void OnSaveClickedCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanSaveMetadata || _isPlaybackView)
+            if (!ViewModel.CanSaveMetadata || _playbackController.IsPlaybackView)
             {
                 return;
             }
 
-            await ViewModel.Details.SaveMetadataAsync();
+            await _featureControllers.Details.SaveMetadataAsync();
         }
 
         private async void DirectFileWriteModeCheckBox_ClickCore(object sender, RoutedEventArgs e)
@@ -1377,37 +1360,37 @@ namespace Archivio.Views
                 return;
             }
 
-            await ViewModel.RefreshFilesAsync();
+            await _featureControllers.List.RefreshAsync();
         }
 
         private async void ChooseFolderButton_Click(object sender, RoutedEventArgs e)
         {
-            await ViewModel.ChooseFolderAsync();
+            await _featureControllers.List.ChooseFolderAsync();
         }
 
         private async void RefreshButton_Click(object sender, RoutedEventArgs e)
         {
-            await ViewModel.RefreshFilesAsync();
+            await _featureControllers.List.RefreshAsync();
         }
 
         private void CancelRefreshButton_Click(object sender, RoutedEventArgs e)
         {
-            ViewModel.CancelRefresh();
+            _featureControllers.List.CancelRefresh();
         }
 
         private async void ExportCsvButton_Click(object sender, RoutedEventArgs e)
         {
-            await ViewModel.ExportVideosToCsvAsync();
+            await _featureControllers.List.ExportCsvAsync();
         }
 
         private async void AddImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanAddCoverArt || _isPlaybackView || _isThumbnailSheetGenerating)
+            if (!ViewModel.CanAddCoverArt || _playbackController.IsPlaybackView || _isThumbnailSheetGenerating)
             {
                 return;
             }
 
-            await ViewModel.Details.AddCoverArtImageAsync();
+            await _featureControllers.Details.AddCoverArtAsync();
         }
 
         private void CoverArt_DragOverCore(object sender, DragEventArgs e)
@@ -1423,7 +1406,7 @@ namespace Archivio.Views
             var selectedVideo = ViewModel.SelectedVideo;
             if (selectedVideo is null
                 || !ViewModel.CanAddCoverArt
-                || _isPlaybackView
+                || _playbackController.IsPlaybackView
                 || _isThumbnailSheetGenerating
                 || !e.DataView.Contains(StandardDataFormats.StorageItems))
             {
@@ -1464,14 +1447,14 @@ namespace Archivio.Views
             }
 
             if (ViewModel.SelectedVideo != selectedVideo || !ViewModel.CanAddCoverArt
-                || _isPlaybackView || _isThumbnailSheetGenerating)
+                || _playbackController.IsPlaybackView || _isThumbnailSheetGenerating)
             {
                 return;
             }
 
             for (var index = 0; index < imageFiles.Count; index++)
             {
-                await ViewModel.Details.ImportCoverArtImageAsync(
+                await _featureControllers.Details.ImportCoverArtAsync(
                     imageFiles[index],
                     replace && index == 0);
             }
@@ -1486,15 +1469,15 @@ namespace Archivio.Views
                 return;
             }
 
-            if (!_isPlaybackView || _videoPlayerElement?.Source is null || _playbackPlayer is null
+            if (!_playbackController.IsPlaybackView || !_playbackController.HasSource
                 || ViewModel.SelectedVideo is not { } targetVideo)
             {
                 ViewModel.SetPlaybackError(LanguageManager.GetString("Msg_CaptureFramePlaybackRequired"));
                 return;
             }
 
-            var cancellationToken = _playbackLoadCts?.Token ?? CancellationToken.None;
-            var position = _playbackPlayer.PlaybackSession?.Position ?? TimeSpan.Zero;
+            var cancellationToken = CancellationToken.None;
+            var position = _playbackController.CurrentPosition;
             try
             {
                 var ffmpegPath = await GetFfmpegPathAsync(cancellationToken);
@@ -1504,19 +1487,18 @@ namespace Archivio.Views
                     return;
                 }
 
-                var file = await VideoFileStorageService.GetFileAsync(targetVideo);
                 cancellationToken.ThrowIfCancellationRequested();
-                var data = await _ffmpegMediaService.CaptureFrameAsync(
+                var data = await _featureControllers.Media.CaptureFrameAsync(
+                    targetVideo,
                     ffmpegPath,
-                    file.Path,
                     position,
                     cancellationToken);
-                if (ViewModel.SelectedVideo != targetVideo || !_isPlaybackView)
+                if (ViewModel.SelectedVideo != targetVideo || !_playbackController.IsPlaybackView)
                 {
                     return;
                 }
 
-                await ViewModel.Details.AddGeneratedCoverArtImageAsync(
+                await _featureControllers.Details.AddGeneratedCoverArtAsync(
                     data,
                     "image/png",
                     $"Archivio capture {position:hh\\:mm\\:ss}");
@@ -1541,7 +1523,7 @@ namespace Archivio.Views
 
         private async void CreateThumbnailSheetButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (_isThumbnailSheetGenerating || _isPlaybackView
+            if (_isThumbnailSheetGenerating || _playbackController.IsPlaybackView
                 || !ViewModel.CanStartVideoFileActions || ViewModel.SelectedVideo is not { } targetVideo)
             {
                 return;
@@ -1549,7 +1531,7 @@ namespace Archivio.Views
 
             _isThumbnailSheetGenerating = true;
             UpdateActionButtonStates();
-            var cancellationToken = _playbackLoadCts?.Token ?? CancellationToken.None;
+            var cancellationToken = CancellationToken.None;
             try
             {
                 var ffmpegPath = await GetFfmpegPathAsync(cancellationToken);
@@ -1567,7 +1549,7 @@ namespace Archivio.Views
                 {
                     // 動画を再生していなくても、選択直後の非同期読み込みが完了していない場合に
                     // ここで技術情報を直接取得してサムネイル生成を継続する。
-                    var probeResult = await _ffmpegMediaService.ProbeAsync(file, cancellationToken);
+                    var probeResult = await _featureControllers.Media.ProbeAsync(file, cancellationToken);
                     duration = probeResult.Duration
                         ?? probeResult.Technical.Duration
                         ?? TimeSpan.Zero;
@@ -1578,17 +1560,17 @@ namespace Archivio.Views
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                var data = await _ffmpegMediaService.CreateThumbnailSheetAsync(
+                var data = await _featureControllers.Media.CreateThumbnailSheetAsync(
+                    targetVideo,
                     ffmpegPath,
-                    file.Path,
                     duration,
                     cancellationToken);
-                if (ViewModel.SelectedVideo != targetVideo || _isPlaybackView)
+                if (ViewModel.SelectedVideo != targetVideo || _playbackController.IsPlaybackView)
                 {
                     return;
                 }
 
-                await ViewModel.Details.AddGeneratedCoverArtImageAsync(
+                await _featureControllers.Details.AddGeneratedCoverArtAsync(
                     data,
                     "image/png",
                     "Archivio thumbnail sheet");
@@ -1620,7 +1602,7 @@ namespace Archivio.Views
         {
             try
             {
-                _ffmpegPath = await _ffmpegMediaService.FindFfmpegAsync(SettingsManager.LoadSettings().FfprobePath);
+                _ffmpegPath = await _featureControllers.Media.FindFfmpegAsync(SettingsManager.LoadSettings().FfprobePath);
             }
             catch (Exception ex)
             {
@@ -1634,7 +1616,7 @@ namespace Archivio.Views
 
         private async Task<string?> GetFfmpegPathAsync(CancellationToken cancellationToken = default)
         {
-            _ffmpegPath ??= await _ffmpegMediaService.FindFfmpegAsync(
+            _ffmpegPath ??= await _featureControllers.Media.FindFfmpegAsync(
                 SettingsManager.LoadSettings().FfprobePath,
                 cancellationToken);
             UpdateActionButtonStates();
@@ -1643,22 +1625,22 @@ namespace Archivio.Views
 
         private async void ReplaceImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanModifyCoverArt || _isPlaybackView || _isThumbnailSheetGenerating)
+            if (!ViewModel.CanModifyCoverArt || _playbackController.IsPlaybackView || _isThumbnailSheetGenerating)
             {
                 return;
             }
 
-            await ViewModel.Details.ReplaceCoverArtImageAsync();
+            await _featureControllers.Details.ReplaceCoverArtAsync();
         }
 
         private void DeleteImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanModifyCoverArt || _isPlaybackView || _isThumbnailSheetGenerating)
+            if (!ViewModel.CanModifyCoverArt || _playbackController.IsPlaybackView || _isThumbnailSheetGenerating)
             {
                 return;
             }
 
-            ViewModel.Details.DeleteCoverArtImage();
+            _featureControllers.Details.DeleteCoverArt();
         }
 
         private void MainPage_KeyDownCore(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
@@ -1741,10 +1723,7 @@ namespace Archivio.Views
                 RefreshCustomDetailControls();
                 UpdateActionButtonStates();
                 // 別ファイルを選択したら、現在の動画と標準コントロールを終了する。
-                _isPlaybackView = false;
-                CoverArtViewToggleButton.IsChecked = true;
-                VideoPlaybackToggleButton.IsChecked = false;
-                await UpdatePlaybackSourceAsync();
+                await _playbackController.OnSelectedVideoChangedAsync();
             }
             else if (e.PropertyName is nameof(MainPageViewModel.CanStartVideoFileActions)
                 or nameof(MainPageViewModel.CanAddCoverArt)
@@ -1756,7 +1735,7 @@ namespace Archivio.Views
                 UpdateActionButtonStates();
                 if (!ViewModel.CanStartVideoFileActions)
                 {
-                    _playbackPlayer?.Pause();
+                    _playbackController.Stop(removePlayer: false);
                 }
             }
         }
@@ -1764,17 +1743,16 @@ namespace Archivio.Views
         private void UpdateCaptureFrameButtonState()
         {
             CaptureFrameButton.IsEnabled = ViewModel.CanStartVideoFileActions
-                && _isPlaybackView
-                && _videoPlayerElement?.Source is not null
-                && _playbackPlayer is not null
+                && _playbackController.IsPlaybackView
+                && _playbackController.HasSource
                 && ViewModel.IsVideoSelected;
         }
 
         private void UpdateActionButtonStates()
         {
-            var canInteractWithFile = ViewModel.CanStartVideoFileActions && !_isPlaybackView;
+            var canInteractWithFile = ViewModel.CanStartVideoFileActions && !_playbackController.IsPlaybackView;
             var canEditCoverArt = canInteractWithFile && !_isThumbnailSheetGenerating;
-            VideoPlaybackToggleButton.IsEnabled = CanStartVideoPlayback && !_isPlaybackView;
+            VideoPlaybackToggleButton.IsEnabled = CanStartVideoPlayback && !_playbackController.IsPlaybackView;
             CoverArtViewToggleButton.IsEnabled = ViewModel.CanStartVideoFileActions;
             UpdateCaptureFrameButtonState();
             CreateThumbnailSheetButton.IsEnabled = canInteractWithFile
@@ -1931,22 +1909,22 @@ namespace Archivio.Views
 
         private async void SaveImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanSaveCoverArt || _isPlaybackView)
+            if (!ViewModel.CanSaveCoverArt || _playbackController.IsPlaybackView)
             {
                 return;
             }
 
-            await ViewModel.Details.SaveCoverArtAsync();
+            await _featureControllers.Details.SaveCoverArtAsync();
         }
 
         private async void ExportImageButton_ClickCore(object sender, RoutedEventArgs e)
         {
-            if (!ViewModel.CanExportCoverArt || _isPlaybackView)
+            if (!ViewModel.CanExportCoverArt || _playbackController.IsPlaybackView)
             {
                 return;
             }
 
-            await ViewModel.Details.ExportCoverArtAsync();
+            await _featureControllers.Details.ExportCoverArtAsync();
         }
 
         private void FilterTextBox_TextChangedCore(object sender, TextChangedEventArgs e)
@@ -2314,7 +2292,7 @@ namespace Archivio.Views
                 var newName = textBox.Text;
                 if (!string.IsNullOrWhiteSpace(newName) && newName != selectedVideo.FileName)
                 {
-                    await ViewModel.RenameVideoAsync(selectedVideo, newName);
+                    await _featureControllers.FileOperations.RenameAsync(selectedVideo, newName);
                 }
             }
         }
@@ -2392,7 +2370,7 @@ namespace Archivio.Views
             SettingsManager.SaveSettings(settings);
             if (!string.Equals(newName, selectedVideo.FileName, StringComparison.OrdinalIgnoreCase))
             {
-                await ViewModel.RenameVideoAsync(selectedVideo, newName);
+                await _featureControllers.FileOperations.RenameAsync(selectedVideo, newName);
             }
         }
 
@@ -2414,7 +2392,7 @@ namespace Archivio.Views
             var result = await dialog.ShowAsync();
             if (result == ContentDialogResult.Primary)
             {
-                await ViewModel.DeleteVideoAsync(selectedVideo);
+                await _featureControllers.FileOperations.DeleteAsync(selectedVideo);
             }
         }
 
@@ -2423,7 +2401,7 @@ namespace Archivio.Views
             var selectedVideo = ViewModel.SelectedVideo;
             if (selectedVideo == null) return;
 
-            await ViewModel.ReMuxVideoAsync(selectedVideo);
+            await _featureControllers.FileOperations.ReMuxAsync(selectedVideo);
         }
 
         private async void ClearCacheMenuItem_Click(object sender, RoutedEventArgs e)
@@ -2441,7 +2419,7 @@ namespace Archivio.Views
             var result = await dialog.ShowAsync();
             if (result == ContentDialogResult.Primary)
             {
-                await ViewModel.ClearCurrentFolderCacheAsync();
+                await _featureControllers.FileOperations.ClearCacheAsync();
             }
         }
 
@@ -2521,11 +2499,9 @@ namespace Archivio.Views
 
         private async void ReadmeMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            var readmePath = Path.Combine(AppContext.BaseDirectory, "README.md");
-
             try
             {
-                var readmeFile = await Windows.Storage.StorageFile.GetFileFromPathAsync(readmePath);
+                var readmeFile = await _featureControllers.Resources.GetReadmeAsync();
                 await Windows.System.Launcher.LaunchFileAsync(readmeFile);
             }
             catch (Exception)

@@ -11,7 +11,7 @@ public partial class MainPage
     private void CoverArt_Drop(object sender, DragEventArgs e) => CoverArt_DropCore(sender, e);
     private void ReplaceImageButton_Click(object sender, RoutedEventArgs e) => ReplaceImageButton_ClickCore(sender, e);
     private void DeleteImageButton_Click(object sender, RoutedEventArgs e) => DeleteImageButton_ClickCore(sender, e);
-    private void CoverArt_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e) => CoverArt_DoubleTappedCore(sender, e);
+    private async void CoverArt_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e) => await _playbackController.LaunchSelectedFileAsync();
     private void CoverArtFlipView_SelectionChanged(object sender, SelectionChangedEventArgs e) => CoverArtFlipView_SelectionChangedCore(sender, e);
     private void SaveImageButton_Click(object sender, RoutedEventArgs e) => SaveImageButton_ClickCore(sender, e);
     private void ExportImageButton_Click(object sender, RoutedEventArgs e) => ExportImageButton_ClickCore(sender, e);
