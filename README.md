@@ -4,6 +4,23 @@ Archivio（アルキーヴィオ）は、動画ファイルを一覧表示し、
 
 バージョン: **1.4.2**
 
+## 開発者向けの再現可能なビルドとテスト
+
+このリポジトリではNuGetの直接依存バージョンを固定し、`packages.lock.json`をコミットして復元結果を固定しています。パッケージを変更した場合は、ロックファイルを更新して差分を確認してください。
+
+PowerShellでリポジトリのルートから次の手順を実行します。
+
+```powershell
+dotnet restore Archivio.slnx
+dotnet build Archivio.slnx -p:Platform=x64 -c Debug --no-restore
+dotnet build Archivio.slnx -p:Platform=x64 -c Release --no-restore
+dotnet run --project Archivio.CompatibilityTests/Archivio.CompatibilityTests.csproj -p:Platform=x64 -c Release --no-build
+```
+
+互換性テストはFFmpegが`PATH`にある場合、MP4/MKV、フレーム取得、サムネイル生成まで実行します。FFmpegがない場合は、FFmpeg依存テストを5秒以内の検出結果に基づいて理由付きでスキップします。テストは一時ディレクトリを作成し、終了時に再試行付きで削除します。
+
+通常のビルド構成は`Debug`と`Release`、プラットフォームは`x86`、`x64`、`ARM64`です。日常の検証と配布確認では`x64`を使用してください。公開は既存の`win-x86.pubxml`、`win-x64.pubxml`、`win-arm64.pubxml`を使用します。
+
 ## 動作環境とインストール
 
 - Windows 10（バージョン1809、ビルド17763以降）またはWindows 11

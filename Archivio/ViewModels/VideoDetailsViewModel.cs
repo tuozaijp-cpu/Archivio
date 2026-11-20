@@ -33,6 +33,7 @@ namespace Archivio.ViewModels
         private readonly Func<string> _getRootFolderPath;
         private readonly Action<string, ulong, DateTimeOffset, VideoMetadataSnapshot>? _onMetadataUpdated;
         private readonly Action<string>? _onCoverArtSaved;
+        private readonly CoverArtExportService _coverArtExportService = new();
 
         private VideoFileItem? _selectedVideo;
         private CancellationTokenSource? _loadingCts;
@@ -438,7 +439,7 @@ namespace Archivio.ViewModels
                     return;
                 }
 
-                await FileIO.WriteBytesAsync(file, image.Data);
+                await _coverArtExportService.ExportAsync(file, image.Data);
                 _setSuccess(LanguageManager.GetString("Msg_CoverImageExported", file.Name));
             }
             catch (Exception ex)

@@ -16,17 +16,18 @@
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+        <RestoreLockedMode>true</RestoreLockedMode>
         <RootNamespace>Archivio</RootNamespace>
         <Version>1.4.2</Version>
         <ApplicationVersion>1.4.2.0</ApplicationVersion>
 
         <!-- App Options -->
-        <UseRidGraph>true</UseRidGraph>
         <Platforms>x86;x64;ARM64</Platforms>
+        <PlatformTarget Condition="'$(Platform)' != ''">$(Platform)</PlatformTarget>
         <ApplicationManifest>app.manifest</ApplicationManifest>
         <PublishProfile>win-$(Platform).pubxml</PublishProfile>
-        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetFrameworkVersion('$(TargetFramework)')) &gt;= 8">win-x86;win-x64;win-arm64</RuntimeIdentifiers>
-        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetFrameworkVersion('$(TargetFramework)')) &lt; 8">win10-x86;win10-x64;win10-arm64</RuntimeIdentifiers>
+        <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
         <ApplicationIcon>Assets\Archivio.ico</ApplicationIcon>
     </PropertyGroup>
 
@@ -43,9 +44,9 @@
         <PackageReference Include="Microsoft-WindowsAPICodePack-Shell" Version="1.1.5" />
         <!-- Pin the Windows App SDK to the version used by the current build environment. -->
         <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
-        <PackageReference Include="Microsoft.Web.WebView2" Version="1.*" />
-        <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.*" />
-        <PackageReference Include="TagLibSharp" Version="2.*" />
+        <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+        <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" />
+        <PackageReference Include="TagLibSharp" Version="2.3.0" />
         <PackageReference Include="CommunityToolkit.WinUI.UI.Controls.DataGrid" Version="7.1.2" />
 
         <Manifest Include="$(ApplicationManifest)" />

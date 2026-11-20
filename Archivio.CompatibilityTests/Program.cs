@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
 using Archivio.Models;
@@ -13,7 +14,10 @@ internal static class Program
 {
     private static int _passed;
     private static int _failed;
+    private static int _skipped;
     private static string _root = string.Empty;
+    internal static bool FfmpegAvailable { get; private set; }
+    internal static string Root => _root;
 
     private static int Main(string[] args)
     {
@@ -23,51 +27,33 @@ internal static class Program
             return _failed == 0 ? 0 : 1;
         }
 
+        FfmpegAvailable = DetectFfmpeg();
+        Console.WriteLine($"FFmpeg integration: {(FfmpegAvailable ? "available" : "not available; dependent tests will be skipped")}");
         _root = Path.Combine(Path.GetTempPath(), $"Archivio-compat-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_root);
         try
         {
-            Run("metadata filename template service", TestMetadataFileNameTemplateService);
-            Run("custom metadata editor value conversion", TestCustomMetadataEditorValueConversion);
-            Run("thumbnail cache capacity and LRU behavior", TestThumbnailCacheCapacityAndLru);
-            Run("thumbnail cache overwrite remove clear and retain", TestThumbnailCacheMutation);
-            Run("metadata loading coordinator retries and cancels", TestMetadataLoadCoordinator);
-            Run("file save operation state is reference counted", TestFileSaveOperationState);
-            Run("video file state boundaries and compatibility facade", TestVideoFileStateBoundaries);
-            Run("selection generation prevents stale updates", TestSelectionGenerationGuard);
-            Run("FFmpeg playback commands and executable discovery", TestFfmpegMediaService);
-            Run("FFmpeg process runner lifecycle", TestProcessRunner);
-            Run("metadata field format capabilities", TestMetadataFieldFormatCapabilities);
-            Run("create isolated media fixtures", CreateFixtures);
-            Run("file operation naming rules", TestVideoFileOperationNamingRules);
-            Run("CSV row formatting", TestVideoCsvRowFormatting);
-            Run("FFmpeg frame capture and thumbnail generation", TestFfmpegMediaProcessing);
-            Run("metadata save verification preserves technical information", TestVerificationPreservesTechnicalInformation);
-            Run("MP4/MKV saves work in direct and backup modes", TestMetadataSaveModes);
-            Run("MP4 standard/custom metadata roundtrip", TestMp4RoundTrip);
-            Run("MKV standard/custom metadata roundtrip", TestMkvRoundTrip);
-            Run("standard-only saves keep existing payload untouched", TestStandardOnlySaveKeepsPayload);
-            Run("other format reads but refuses writes", TestOtherFormatReadOnly);
-            Run("multiple cover images roundtrip", TestMultipleImages);
-            Run("broken custom payload leaves standard tags readable", TestCorruptCustomPayload);
-            Run("technical probe retains multiple audio streams", TestTechnicalStreams);
-            Run("legacy settings and snapshot migration", TestLegacyMigration);
-            Run("display visibility and order settings", TestDisplaySettings);
-            Run("unknown field IDs are ignored by the catalog", TestUnknownFieldIds);
-            Run("metadata file commit modes", TestMetadataFileCommitModes);
-            Run("external modifications are detected", TestExternalModificationDetection);
-            Run("failed save leaves original bytes unchanged", TestFailedSavePreservesOriginal);
+            foreach (var test in CompatibilityTestCatalog.All)
+            {
+                if (test.RequiresFfmpeg && !FfmpegAvailable)
+                {
+                    Skip(test.DisplayName, "ffmpeg executable was not found within the 5 second discovery timeout");
+                    continue;
+                }
+
+                Run(test.DisplayName, test.Action);
+            }
         }
         finally
         {
-            try { Directory.Delete(_root, recursive: true); } catch { }
+            CleanupTemporaryRoot();
         }
 
-        Console.WriteLine($"\nCompatibility checks: {_passed} passed, {_failed} failed.");
+        Console.WriteLine($"\nCompatibility checks: {_passed} passed, {_failed} failed, {_skipped} skipped.");
         return _failed == 0 ? 0 : 1;
     }
 
-    private static void CreateFixtures()
+    internal static void CreateFixtures()
     {
         var mp4 = Path.Combine(_root, "sample.mp4");
         var mkv = Path.Combine(_root, "sample.mkv");
@@ -78,10 +64,10 @@ internal static class Program
         Assert(IoFile.Exists(mp4) && IoFile.Exists(mkv) && IoFile.Exists(mp3), "fixture files were not created");
     }
 
-    private static void TestMp4RoundTrip() => TestContainerRoundTrip("sample.mp4");
-    private static void TestMkvRoundTrip() => TestContainerRoundTrip("sample.mkv");
+    internal static void TestMp4RoundTrip() => TestContainerRoundTrip("sample.mp4");
+    internal static void TestMkvRoundTrip() => TestContainerRoundTrip("sample.mkv");
 
-    private static void TestMetadataFieldFormatCapabilities()
+    internal static void TestMetadataFieldFormatCapabilities()
     {
         Assert(!MetadataFieldCatalog.ListFields.Any(field => field.Id == "file.status"), "status column is still available");
         var mp4 = EmbeddedMetadataFormatAdapterSelector.Select("sample.mp4");
@@ -98,7 +84,7 @@ internal static class Program
         Assert(other.GetFieldCapability("unknown.future-id") == MetadataFieldCapability.Unsupported, "unknown ID was not rejected");
     }
 
-    private static void TestVideoFileOperationNamingRules()
+    internal static void TestVideoFileOperationNamingRules()
     {
         Assert(VideoFileOperationsService.GetRenameName("video.mp4", "renamed") == "renamed.mp4",
             "rename rule did not append the source extension");
@@ -116,7 +102,7 @@ internal static class Program
             "remux output naming did not skip existing files");
     }
 
-    private static void TestVideoCsvRowFormatting()
+    internal static void TestVideoCsvRowFormatting()
     {
         var row = new VideoCsvRow(
             "clip,one.mp4", "1 KB", "Title, \"Quoted\"\r\nLine", "Actor", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
@@ -130,7 +116,7 @@ internal static class Program
             "CSV export did not escape quotes and line breaks in a field");
     }
 
-    private static void TestVerificationPreservesTechnicalInformation()
+    internal static void TestVerificationPreservesTechnicalInformation()
     {
         var path = CopyFixture("sample.mp4");
         var technicalInfo = new VideoTechnicalInfo
@@ -174,7 +160,7 @@ internal static class Program
         Assert(actual.AudioFormat == expected.AudioFormat && actual.TechnicalInfo.PrimaryVideo?.Codec == "h264", "technical stream information was not preserved");
     }
 
-    private static void TestMetadataFileNameTemplateService()
+    internal static void TestMetadataFileNameTemplateService()
     {
         var item = new VideoFileItem("video.mp4");
         item.Title = "Title:/ one";
@@ -209,7 +195,7 @@ internal static class Program
         Assert(service.Build(item, @"literal{").FileName == "literal{.mp4", "unclosed brace was not preserved as literal text");
     }
 
-    private static void TestFileSaveOperationState()
+    internal static void TestFileSaveOperationState()
     {
         var item = new VideoFileItem("video.mp4");
         var stateNotifications = 0;
@@ -236,7 +222,7 @@ internal static class Program
         Assert(stateNotifications == 2, "ending the final save did not notify state change");
     }
 
-    private static void TestVideoFileStateBoundaries()
+    internal static void TestVideoFileStateBoundaries()
     {
         var item = new VideoFileItem("state-test.mp4");
         Assert(item.FileInfoState.FullPath == "state-test.mp4" && item.FileInfoState.FileName == "state-test.mp4",
@@ -259,7 +245,7 @@ internal static class Program
             "cover art state contains invalid image data");
     }
 
-    private static void TestSelectionGenerationGuard()
+    internal static void TestSelectionGenerationGuard()
     {
         var guard = new SelectionGenerationGuard();
         var first = guard.Begin();
@@ -268,7 +254,7 @@ internal static class Program
             "a previous selection generation was still considered current");
     }
 
-    private static void TestCustomMetadataEditorValueConversion()
+    internal static void TestCustomMetadataEditorValueConversion()
     {
         var multipleText = new MetadataValue();
         multipleText.SetEditorValue(MetadataFieldValueType.MultipleText, "First; Second\r\nThird");
@@ -287,7 +273,7 @@ internal static class Program
         Assert(dateValue.ToEditorText() == "2024-02-03", "date editor value was not formatted");
     }
 
-    private static void TestThumbnailCacheCapacityAndLru()
+    internal static void TestThumbnailCacheCapacityAndLru()
     {
         var entryLimitCache = new ThumbnailImageCache(maxEntries: 2, maxImageDataBytes: 100);
         entryLimitCache.Set("one.mp4", CreateThumbnailCacheEntry(2));
@@ -317,7 +303,7 @@ internal static class Program
             "oversized replacement did not remove the previous entry from cache accounting");
     }
 
-    private static void TestThumbnailCacheMutation()
+    internal static void TestThumbnailCacheMutation()
     {
         var cache = new ThumbnailImageCache(maxEntries: 5, maxImageDataBytes: 20);
         cache.Set("one.mp4", CreateThumbnailCacheEntry(5));
@@ -357,7 +343,7 @@ internal static class Program
         };
     }
 
-    private static void TestMetadataLoadCoordinator()
+    internal static void TestMetadataLoadCoordinator()
     {
         using var readSemaphore = new SemaphoreSlim(1, 1);
         var coordinator = new MetadataLoadCoordinator(readSemaphore, maxAttempts: 3, retryDelay: TimeSpan.Zero);
@@ -423,7 +409,7 @@ internal static class Program
         Assert(maximumConcurrency == 2, "metadata coordinator did not enforce the configured shared concurrency limit");
     }
 
-    private static void TestFfmpegMediaService()
+    internal static void TestFfmpegMediaService()
     {
         var executableDirectory = Path.Combine(_root, "ffmpeg-tools");
         Directory.CreateDirectory(executableDirectory);
@@ -481,7 +467,7 @@ internal static class Program
         Assert(invalidDurationRejected, "thumbnail sheet accepted an invalid duration");
     }
 
-    private static void TestProcessRunner()
+    internal static void TestProcessRunner()
     {
         var success = new ProcessStartInfo("cmd.exe")
         {
@@ -520,7 +506,7 @@ internal static class Program
         Assert(timedOut, "process runner did not distinguish timeout");
     }
 
-    private static void TestFfmpegMediaProcessing()
+    internal static void TestFfmpegMediaProcessing()
     {
         var service = new FfmpegMediaService();
         var ffmpegPath = service.FindFfmpegAsync(null).GetAwaiter().GetResult();
@@ -544,7 +530,7 @@ internal static class Program
         data.Length >= 8
         && data.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
 
-    private static void TestContainerRoundTrip(string fixtureName)
+    internal static void TestContainerRoundTrip(string fixtureName)
     {
         var path = CopyFixture(fixtureName);
         var adapter = EmbeddedMetadataFormatAdapterSelector.Select(path);
@@ -562,6 +548,7 @@ internal static class Program
 
         var storageFile = GetStorageFile(path);
         var store = new EmbeddedVideoMetadataStore();
+        var beforeBytes = IoFile.ReadAllBytes(path);
         var before = store.LoadAsync(storageFile).GetAwaiter().GetResult().Metadata;
         var snapshot = MetadataDocumentMapper.ToSnapshot(MetadataDocumentMapper.FromSnapshot(before));
         snapshot.Title = "Archivio roundtrip 漢字";
@@ -587,6 +574,8 @@ internal static class Program
         }).GetAwaiter().GetResult();
         Assert(save.Succeeded, $"save failed: {save.Details}");
         var after = store.LoadAsync(storageFile).GetAwaiter().GetResult().Metadata;
+        Assert(!beforeBytes.SequenceEqual(IoFile.ReadAllBytes(path)),
+            "successful metadata save did not change the file bytes");
         Assert(after.Title == snapshot.Title, "standard title was not restored");
         Assert(after.Comment == snapshot.Comment, "standard comment/newlines were not restored");
         Assert(after.StructuredMetadata.Work.OriginalTitle == "Original title", "custom original title missing");
@@ -602,7 +591,7 @@ internal static class Program
         Assert(check.Tag.Album == "Preserved album tag", "unrelated standard tag was damaged");
     }
 
-    private static void TestMetadataSaveModes()
+    internal static void TestMetadataSaveModes()
     {
         foreach (var fixture in new[] { "sample.mp4", "sample.mkv" })
         {
@@ -653,7 +642,7 @@ internal static class Program
         }
     }
 
-    private static void TestStandardOnlySaveKeepsPayload()
+    internal static void TestStandardOnlySaveKeepsPayload()
     {
         foreach (var fixture in new[] { "sample.mp4", "sample.mkv" })
         {
@@ -722,7 +711,7 @@ internal static class Program
         }
     }
 
-    private static void TestOtherFormatReadOnly()
+    internal static void TestOtherFormatReadOnly()
     {
         var path = CopyFixture("sample.mp3");
         var adapter = EmbeddedMetadataFormatAdapterSelector.Select(path);
@@ -746,7 +735,7 @@ internal static class Program
         Assert(store.LoadAsync(file).GetAwaiter().GetResult().Metadata.Title == "Existing audio title", "existing tag could not be read");
     }
 
-    private static void TestMultipleImages()
+    internal static void TestMultipleImages()
     {
         var path = CopyFixture("sample.mp4");
         var file = GetStorageFile(path);
@@ -761,7 +750,18 @@ internal static class Program
         Assert(result.ReloadedCoverArtImages.Count == 2, "multiple images were not reread");
     }
 
-    private static void TestCorruptCustomPayload()
+    internal static void TestCoverArtExport()
+    {
+        var source = new byte[] { 137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4 };
+        var destinationPath = Path.Combine(_root, "exported-cover.png");
+        var destination = GetStorageFile(destinationPath, createIfMissing: true);
+        new CoverArtExportService().ExportAsync(destination, source).GetAwaiter().GetResult();
+
+        Assert(IoFile.ReadAllBytes(destinationPath).SequenceEqual(source),
+            "cover art export did not preserve the original image bytes");
+    }
+
+    internal static void TestCorruptCustomPayload()
     {
         var path = CopyFixture("sample.mp4");
         using (var media = TagLib.File.Create(path))
@@ -778,7 +778,7 @@ internal static class Program
         Assert(!string.IsNullOrWhiteSpace(result.ArchivioMetadataError), "corruption was not reported");
     }
 
-    private static void TestTechnicalStreams()
+    internal static void TestTechnicalStreams()
     {
         var previous = Environment.GetEnvironmentVariable("FFPROBE_PATH");
         Environment.SetEnvironmentVariable("FFPROBE_PATH", "ffprobe");
@@ -792,7 +792,7 @@ internal static class Program
         finally { Environment.SetEnvironmentVariable("FFPROBE_PATH", previous); }
     }
 
-    private static void TestLegacyMigration()
+    internal static void TestLegacyMigration()
     {
         const string legacySettings = """{"ColumnOrder":["Title","ReleaseDateText"],"ColumnWidths":{"Title":210},"VisibleListFieldIds":["work.title","deleted.legacy-id"],"VisibleDetailFieldIds":["work.title"],"DetailFieldOrder":["work.title","dates.release"]}""";
         var settings = JsonSerializer.Deserialize<AppSettings>(legacySettings) ?? throw new InvalidOperationException("legacy settings did not deserialize");
@@ -809,7 +809,7 @@ internal static class Program
         Assert(document.Dates.ReleaseDate?.Year == 2021, "legacy date did not migrate");
     }
 
-    private static void TestUnknownFieldIds()
+    internal static void TestUnknownFieldIds()
     {
         Assert(MetadataFieldCatalog.FindById("field.from.future-version") is null, "unknown ID should not resolve");
         var other = EmbeddedMetadataFormatAdapterSelector.Select("unknown-container.xyz");
@@ -819,7 +819,7 @@ internal static class Program
         Assert(oldSettings.ListFieldOrder.SequenceEqual(new[] { "work.title" }), "unknown ID was not safely ignored");
     }
 
-    private static void TestDisplaySettings()
+    internal static void TestDisplaySettings()
     {
         MetadataFieldCatalog.RefreshCustomFields(null);
         var savedColumnSettings = JsonSerializer.Deserialize<AppSettings>(
@@ -861,7 +861,7 @@ internal static class Program
         Assert(MetadataFieldCatalog.FindById("work.title")?.LocalizationKey == "Col_Title", "standard field localization key changed");
     }
 
-    private static void TestMetadataFileCommitModes()
+    internal static void TestMetadataFileCommitModes()
     {
         var backupPath = CopyFixture("sample.mp4");
         var originalBytes = IoFile.ReadAllBytes(backupPath);
@@ -890,7 +890,7 @@ internal static class Program
             "direct mode changes were not retained");
     }
 
-    private static void TestExternalModificationDetection()
+    internal static void TestExternalModificationDetection()
     {
         var path = CopyFixture("sample.mp4");
         var commit = FileCommitService.Open(path, directWrite: false);
@@ -914,7 +914,7 @@ internal static class Program
         Assert(!IoFile.Exists(temporaryPath), "uncommitted working copy was not removed");
     }
 
-    private static void TestFailedSavePreservesOriginal()
+    internal static void TestFailedSavePreservesOriginal()
     {
         MetadataFieldCatalog.RefreshCustomFields(new[]
         {
@@ -948,8 +948,11 @@ internal static class Program
     }
 
     // WinRTの非同期処理を完了させてから同期テストへ戻します。
-    private static StorageFile GetStorageFile(string path) =>
-        Task.Run(async () => await StorageFile.GetFileFromPathAsync(path)).GetAwaiter().GetResult();
+    private static StorageFile GetStorageFile(string path, bool createIfMissing = false)
+    {
+        if (createIfMissing && !IoFile.Exists(path)) IoFile.WriteAllBytes(path, []);
+        return Task.Run(async () => await StorageFile.GetFileFromPathAsync(path)).GetAwaiter().GetResult();
+    }
 
     private static void RunFfmpeg(params string[] arguments)
     {
@@ -958,8 +961,65 @@ internal static class Program
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("ffmpeg did not start");
         var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        if (!process.WaitForExit(30_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new InvalidOperationException("ffmpeg fixture generation timed out after 30 seconds");
+        }
         if (process.ExitCode != 0) throw new InvalidOperationException($"ffmpeg failed: {stderr}");
+    }
+
+    private static bool DetectFfmpeg()
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo("ffmpeg", "-version")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+            if (process is null || !process.WaitForExit(5_000))
+            {
+                try { process?.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
+
+            return process.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static void CleanupTemporaryRoot()
+    {
+        for (var attempt = 0; attempt < 3 && Directory.Exists(_root); attempt++)
+        {
+            try
+            {
+                Directory.Delete(_root, recursive: true);
+                return;
+            }
+            catch when (attempt < 2)
+            {
+                Thread.Sleep(100);
+            }
+        }
+
+        if (Directory.Exists(_root))
+        {
+            _failed++;
+            Console.WriteLine($"FAIL test cleanup: temporary directory remained: {_root}");
+        }
+    }
+
+    private static void Skip(string name, string reason)
+    {
+        _skipped++;
+        Console.WriteLine($"SKIP {name}: {reason}");
     }
 
     private static void Run(string name, Action check)
