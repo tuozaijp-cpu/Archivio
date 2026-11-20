@@ -225,10 +225,13 @@ internal static class Program
     internal static void TestVideoFileStateBoundaries()
     {
         var item = new VideoFileItem("state-test.mp4");
+        var titleNotification = false;
+        item.PropertyChanged += (_, args) => titleNotification |= args.PropertyName == nameof(VideoFileItem.Title);
         Assert(item.FileInfoState.FullPath == "state-test.mp4" && item.FileInfoState.FileName == "state-test.mp4",
             "file information state was not initialized without StorageFile");
 
         item.FileSizeBytes = 123;
+        item.Title = "State title";
         item.CoverArtImages = new List<CoverArtImageData>
         {
             new() { Data = [1, 2, 3], MimeType = "image/jpeg" }
@@ -237,6 +240,8 @@ internal static class Program
         item.MarkCustomMetadataFieldChanged("custom.stable-id");
 
         Assert(item.FileInfoState.FileSizeBytes == 123, "file information state did not track the compatibility property");
+        Assert(item.MetadataState.Title == "State title" && titleNotification,
+            "metadata state and compatibility notification were not synchronized");
         Assert(item.CoverArtState.Images.Count == 1 && item.CoverArtState.IsDirty,
             "cover art state did not track binary image state");
         Assert(item.ChangeTrackingState.DirtyCustomFieldIds.Contains("custom.stable-id"),

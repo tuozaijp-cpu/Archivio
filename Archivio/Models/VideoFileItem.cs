@@ -19,9 +19,6 @@ namespace Archivio.Models
         private readonly VideoTechnicalState _technicalState = new();
         private readonly VideoCoverArtState _coverArtState = new();
         private readonly VideoChangeTrackingState _changeTrackingState = new();
-        private string _originalStructuredMetadataJson = string.Empty;
-        private MetadataDocument _originalStructuredMetadata = new();
-        private int _activeFileSaveOperationCount;
 
         public VideoFileInfoState FileInfoState => _fileInfoState;
         public VideoMetadataState MetadataState => _metadataState;
@@ -55,7 +52,6 @@ namespace Archivio.Models
         public void SetTechnicalInfo(VideoTechnicalInfo value)
         {
             _technicalState.Info = value ?? new VideoTechnicalInfo();
-            _metadataState.TechnicalInfo = _technicalState.Info;
             OnPropertyChanged(nameof(TechnicalInfo));
         }
 
@@ -123,11 +119,11 @@ namespace Archivio.Models
 
         public IReadOnlyCollection<string> DirtyCustomMetadataFieldIds => _changeTrackingState.DirtyCustomFieldIds;
 
-        public bool IsFileSaveInProgress => Volatile.Read(ref _activeFileSaveOperationCount) > 0;
+        public bool IsFileSaveInProgress => _changeTrackingState.ActiveFileSaveOperationCount > 0;
 
         public void BeginFileSaveOperation()
         {
-            if (Interlocked.Increment(ref _activeFileSaveOperationCount) == 1)
+            if (_changeTrackingState.IncrementSaveOperation() == 1)
             {
                 OnPropertyChanged(nameof(IsFileSaveInProgress));
             }
@@ -135,10 +131,10 @@ namespace Archivio.Models
 
         public void EndFileSaveOperation()
         {
-            var remainingOperations = Interlocked.Decrement(ref _activeFileSaveOperationCount);
+            var remainingOperations = _changeTrackingState.DecrementSaveOperation();
             if (remainingOperations < 0)
             {
-                Interlocked.Exchange(ref _activeFileSaveOperationCount, 0);
+                _changeTrackingState.ResetSaveOperations();
                 throw new InvalidOperationException("No file save operation is in progress.");
             }
 
@@ -161,61 +157,30 @@ namespace Archivio.Models
             HasPendingChangesNotify();
         }
 
-        private string _title = string.Empty;
-        private string _fileSizeText = string.Empty;
-        private ulong _fileSizeBytes;
-        private string _participants = string.Empty;
-        private string _category = string.Empty;
-        private string _comment = string.Empty;
-        private string _catalogNumber = string.Empty;
-        private string _rating = string.Empty;
-        private string _contentDistributor = string.Empty;
-        private string _publisher = string.Empty;
-        private string _duration = string.Empty;
-        private TimeSpan? _durationValue;
-        private string _frameWidth = string.Empty;
-        private string _frameHeight = string.Empty;
-        private string _frameRate = string.Empty;
-        private string _videoBitrate = string.Empty;
-        private string _videoCompression = string.Empty;
-        private string _audioSampleRate = string.Empty;
-        private string _audioBitrate = string.Empty;
-        private string _audioFormat = string.Empty;
-        private string _releaseDateText = string.Empty;
-        private DateTimeOffset _releaseDate = new(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        private bool SetStateProperty<T>(string propertyName, T current, T value, Action<T> setter)
+        {
+            if (EqualityComparer<T>.Default.Equals(current, value)) return false;
+            setter(value);
+            OnPropertyChanged(propertyName);
+            return true;
+        }
+
         private BitmapImage? _coverArt;
         private BitmapImage? _thumbnailImage;
         private ObservableCollection<BitmapImage> _coverArts = new();
-        private bool _hasCoverArt;
-        private bool _isApplyingInitialValues;
-        private bool _isLoaded;
-        private bool _isCoverArtLoaded;
-        private bool _isCoverArtDirty;
         private bool _isThumbnailLoading;
         private bool _thumbnailLoadFailed;
-        private bool _isDeleted;
-        private int _selectedCoverArtIndex;
-        private Dictionary<string, string> _originalValues = new(StringComparer.OrdinalIgnoreCase);
-        private string _fileName = string.Empty;
-        private string _fullPath = string.Empty;
 
         public VideoFileItem(string path)
         {
-            _fileInfoState.FullPath = _fullPath = path;
-            _fileInfoState.FileName = _fileName = System.IO.Path.GetFileName(path);
+            _fileInfoState.FullPath = path;
+            _fileInfoState.FileName = System.IO.Path.GetFileName(path);
         }
 
         public string FileName
         {
             get => _fileInfoState.FileName;
-            set
-            {
-                if (SetProperty(ref _fileName, value))
-                {
-                    _fileInfoState.FileName = value;
-                    OnPropertyChanged(nameof(DisplayTitle));
-                }
-            }
+            set { if (SetStateProperty(nameof(FileName), _fileInfoState.FileName, value ?? string.Empty, v => _fileInfoState.FileName = v)) OnPropertyChanged(nameof(DisplayTitle)); }
         }
 
         public string DisplayTitle => string.IsNullOrWhiteSpace(Title) ? FileName : Title;
@@ -243,17 +208,13 @@ namespace Archivio.Models
             get => _fileInfoState.FullPath;
             private set
             {
-                if (SetProperty(ref _fullPath, value))
-                {
-                    _fileInfoState.FullPath = value;
-                }
+                SetStateProperty(nameof(FullPath), _fileInfoState.FullPath, value ?? string.Empty, v => _fileInfoState.FullPath = v);
             }
         }
 
         public void UpdatePath(string path)
         {
-            _fileName = System.IO.Path.GetFileName(path);
-            _fileInfoState.FileName = _fileName;
+            _fileInfoState.FileName = System.IO.Path.GetFileName(path);
             FullPath = path;
             OnPropertyChanged(nameof(FileName));
             OnPropertyChanged(nameof(DisplayTitle));
@@ -264,7 +225,7 @@ namespace Archivio.Models
             get => _fileInfoState.FileSizeBytes;
             set
             {
-                if (SetProperty(ref _fileSizeBytes, value)) _fileInfoState.FileSizeBytes = value;
+                SetStateProperty(nameof(FileSizeBytes), _fileInfoState.FileSizeBytes, value, v => _fileInfoState.FileSizeBytes = v);
             }
         }
 
@@ -273,16 +234,16 @@ namespace Archivio.Models
             get => _fileInfoState.FileSizeText;
             set
             {
-                if (SetProperty(ref _fileSizeText, value)) _fileInfoState.FileSizeText = value;
+                SetStateProperty(nameof(FileSizeText), _fileInfoState.FileSizeText, value ?? string.Empty, v => _fileInfoState.FileSizeText = v);
             }
         }
 
         public TimeSpan? DurationValue
         {
-            get => _durationValue;
+            get => _metadataState.DurationValue;
             set
             {
-                if (SetProperty(ref _durationValue, value)) _metadataState.DurationValue = value;
+                SetStateProperty(nameof(DurationValue), _metadataState.DurationValue, value, v => _metadataState.DurationValue = v);
             }
         }
 
@@ -290,13 +251,13 @@ namespace Archivio.Models
         {
             return new VideoMetadataSnapshot
             {
-                Title = _title,
-                Participants = _participants,
-                CatalogNumber = _catalogNumber,
-                Category = _category,
-                Rating = _rating,
-                ContentDistributor = _contentDistributor,
-                Publisher = _publisher,
+                Title = Title,
+                Participants = Participants,
+                CatalogNumber = CatalogNumber,
+                Category = Category,
+                Rating = Rating,
+                ContentDistributor = ContentDistributor,
+                Publisher = Publisher,
                 Duration = Duration,
                 FrameWidth = FrameWidth,
                 FrameHeight = FrameHeight,
@@ -306,9 +267,9 @@ namespace Archivio.Models
                 AudioSampleRate = AudioSampleRate,
                 AudioBitrate = AudioBitrate,
                 AudioFormat = AudioFormat,
-                Comment = _comment,
-                ReleaseDateText = _releaseDateText,
-                ReleaseDate = _releaseDate,
+                Comment = Comment,
+                ReleaseDateText = ReleaseDateText,
+                ReleaseDate = ReleaseDate,
                 Technical = new VideoTechnicalMetadata
                 {
                     Duration = TechnicalInfo.Duration ?? DurationValue,
@@ -330,26 +291,26 @@ namespace Archivio.Models
         {
             return new VideoMetadataSnapshot
             {
-                Title = _originalValues.TryGetValue(nameof(Title), out var title) ? title : _title,
-                Participants = _originalValues.TryGetValue(nameof(Participants), out var participants) ? participants : _participants,
-                CatalogNumber = _originalValues.TryGetValue(nameof(CatalogNumber), out var catalogNumber) ? catalogNumber : _catalogNumber,
-                Category = _originalValues.TryGetValue(nameof(Category), out var category) ? category : _category,
-                Rating = _originalValues.TryGetValue(nameof(Rating), out var rating) ? rating : _rating,
-                ContentDistributor = _originalValues.TryGetValue(nameof(ContentDistributor), out var contentDistributor) ? contentDistributor : _contentDistributor,
-                Publisher = _originalValues.TryGetValue(nameof(Publisher), out var publisher) ? publisher : _publisher,
-                Comment = _originalValues.TryGetValue(nameof(Comment), out var comment) ? comment : _comment,
-                ReleaseDateText = _originalValues.TryGetValue(nameof(ReleaseDate), out var releaseDateText) ? releaseDateText : _releaseDateText,
-                ReleaseDate = DateTimeOffset.TryParse(_originalValues.TryGetValue(nameof(ReleaseDate), out var releaseDateValue) ? releaseDateValue : _releaseDateText, out var parsedDate)
+                Title = _changeTrackingState.OriginalValues.TryGetValue(nameof(Title), out var title) ? title : Title,
+                Participants = _changeTrackingState.OriginalValues.TryGetValue(nameof(Participants), out var participants) ? participants : Participants,
+                CatalogNumber = _changeTrackingState.OriginalValues.TryGetValue(nameof(CatalogNumber), out var catalogNumber) ? catalogNumber : CatalogNumber,
+                Category = _changeTrackingState.OriginalValues.TryGetValue(nameof(Category), out var category) ? category : Category,
+                Rating = _changeTrackingState.OriginalValues.TryGetValue(nameof(Rating), out var rating) ? rating : Rating,
+                ContentDistributor = _changeTrackingState.OriginalValues.TryGetValue(nameof(ContentDistributor), out var contentDistributor) ? contentDistributor : ContentDistributor,
+                Publisher = _changeTrackingState.OriginalValues.TryGetValue(nameof(Publisher), out var publisher) ? publisher : Publisher,
+                Comment = _changeTrackingState.OriginalValues.TryGetValue(nameof(Comment), out var comment) ? comment : Comment,
+                ReleaseDateText = _changeTrackingState.OriginalValues.TryGetValue(nameof(ReleaseDate), out var releaseDateText) ? releaseDateText : ReleaseDateText,
+            ReleaseDate = DateTimeOffset.TryParse(_changeTrackingState.OriginalValues.TryGetValue(nameof(ReleaseDate), out var releaseDateValue) ? releaseDateValue : ReleaseDateText, out var parsedDate)
                     ? parsedDate
-                    : _releaseDate,
-                StructuredMetadata = _originalStructuredMetadata.Clone()
+                    : ReleaseDate,
+                StructuredMetadata = _changeTrackingState.OriginalStructuredMetadata.Clone()
             };
         }
 
         public bool IsLoaded
         {
-            get => _isLoaded;
-            set => SetProperty(ref _isLoaded, value);
+            get => _metadataState.IsLoaded;
+            set => SetStateProperty(nameof(IsLoaded), _metadataState.IsLoaded, value, v => _metadataState.IsLoaded = v);
         }
 
         public bool IsCoverArtLoaded
@@ -357,86 +318,80 @@ namespace Archivio.Models
             get => _coverArtState.IsLoaded;
             set
             {
-                if (SetProperty(ref _isCoverArtLoaded, value)) _coverArtState.IsLoaded = value;
+                SetStateProperty(nameof(IsCoverArtLoaded), _coverArtState.IsLoaded, value, v => _coverArtState.IsLoaded = v);
             }
         }
 
         public string Title
         {
-            get => _title;
+            get => _metadataState.Title;
             set
             {
-                if (SetProperty(ref _title, value))
+                if (SetStateProperty(nameof(Title), _metadataState.Title, value ?? string.Empty, v => _metadataState.Title = v))
                 {
-                    _metadataState.Title = value;
                     OnPropertyChanged(nameof(DisplayTitle));
-                    UpdateChangeState(nameof(Title), value);
+                    UpdateChangeState(nameof(Title), value ?? string.Empty);
                 }
             }
         }
 
         public string Participants
         {
-            get => _participants;
+            get => _metadataState.Participants;
             set
             {
-                if (SetProperty(ref _participants, value))
+                if (SetStateProperty(nameof(Participants), _metadataState.Participants, value ?? string.Empty, v => _metadataState.Participants = v))
                 {
-                    _metadataState.Participants = value;
                     OnPropertyChanged(nameof(DisplayParticipants));
-                    UpdateChangeState(nameof(Participants), value);
+                    UpdateChangeState(nameof(Participants), value ?? string.Empty);
                 }
             }
         }
 
         public string Category
         {
-            get => _category;
+            get => _metadataState.Category;
             set
             {
-                if (SetProperty(ref _category, value))
+                if (SetStateProperty(nameof(Category), _metadataState.Category, value ?? string.Empty, v => _metadataState.Category = v))
                 {
-                    _metadataState.Category = value;
-                    UpdateChangeState(nameof(Category), value);
+                    UpdateChangeState(nameof(Category), value ?? string.Empty);
                 }
             }
         }
 
         public string Comment
         {
-            get => _comment;
+            get => _metadataState.Comment;
             set
             {
-                if (SetProperty(ref _comment, value))
+                if (SetStateProperty(nameof(Comment), _metadataState.Comment, value ?? string.Empty, v => _metadataState.Comment = v))
                 {
-                    _metadataState.Comment = value;
-                    UpdateChangeState(nameof(Comment), value);
+                    UpdateChangeState(nameof(Comment), value ?? string.Empty);
                 }
             }
         }
 
         public string CatalogNumber
         {
-            get => _catalogNumber;
+            get => _metadataState.CatalogNumber;
             set
             {
-                if (SetProperty(ref _catalogNumber, value))
+                if (SetStateProperty(nameof(CatalogNumber), _metadataState.CatalogNumber, value ?? string.Empty, v => _metadataState.CatalogNumber = v))
                 {
-                    _metadataState.CatalogNumber = value;
-                    UpdateChangeState(nameof(CatalogNumber), value);
+                    UpdateChangeState(nameof(CatalogNumber), value ?? string.Empty);
                 }
             }
         }
 
         public string Rating
         {
-            get => _rating;
+            get => _metadataState.Rating;
             set
             {
-                if (SetProperty(ref _rating, value))
+                if (SetStateProperty(nameof(Rating), _metadataState.Rating, value ?? string.Empty, v => _metadataState.Rating = v))
                 {
-                    _metadataState.Rating = value;
-                    UpdateChangeState(nameof(Rating), value);
+                    UpdateChangeState(nameof(Rating), value ?? string.Empty);
                     OnPropertyChanged(nameof(RatingStarsIndex));
                     OnPropertyChanged(nameof(RatingStarsText));
                 }
@@ -447,7 +402,7 @@ namespace Archivio.Models
         {
             get
             {
-                if (uint.TryParse(_rating, out var r))
+                if (uint.TryParse(Rating, out var r))
                 {
                     if (r >= 1 && r <= 5) return (int)r;
 
@@ -457,12 +412,12 @@ namespace Archivio.Models
                     if (r >= 15) return 2;
                     if (r >= 1) return 1;
                 }
-                else if (!string.IsNullOrWhiteSpace(_rating))
+                else if (!string.IsNullOrWhiteSpace(Rating))
                 {
-                    var filledStarsCount = _rating.Count(c => c == '★');
+                    var filledStarsCount = Rating.Count(c => c == '★');
                     if (filledStarsCount > 0) return filledStarsCount;
 
-                    var digits = new string(_rating.Where(char.IsDigit).ToArray());
+                    var digits = new string(Rating.Where(char.IsDigit).ToArray());
                     if (uint.TryParse(digits, out var d))
                     {
                         if (d >= 1 && d <= 5) return (int)d;
@@ -512,38 +467,35 @@ namespace Archivio.Models
 
         public string ContentDistributor
         {
-            get => _contentDistributor;
+            get => _metadataState.ContentDistributor;
             set
             {
-                if (SetProperty(ref _contentDistributor, value))
+                if (SetStateProperty(nameof(ContentDistributor), _metadataState.ContentDistributor, value ?? string.Empty, v => _metadataState.ContentDistributor = v))
                 {
-                    _metadataState.ContentDistributor = value;
-                    UpdateChangeState(nameof(ContentDistributor), value);
+                    UpdateChangeState(nameof(ContentDistributor), value ?? string.Empty);
                 }
             }
         }
 
         public string Publisher
         {
-            get => _publisher;
+            get => _metadataState.Publisher;
             set
             {
-                if (SetProperty(ref _publisher, value))
+                if (SetStateProperty(nameof(Publisher), _metadataState.Publisher, value ?? string.Empty, v => _metadataState.Publisher = v))
                 {
-                    _metadataState.Publisher = value;
-                    UpdateChangeState(nameof(Publisher), value);
+                    UpdateChangeState(nameof(Publisher), value ?? string.Empty);
                 }
             }
         }
 
         public string Duration
         {
-            get => _duration;
+            get => _metadataState.Duration;
             set
             {
-                if (SetProperty(ref _duration, value))
+                if (SetStateProperty(nameof(Duration), _metadataState.Duration, value ?? string.Empty, v => _metadataState.Duration = v))
                 {
-                    _metadataState.Duration = value;
                     DurationValue = DisplayFormatHelper.TryParseDuration(value);
                 }
             }
@@ -551,68 +503,67 @@ namespace Archivio.Models
 
         public string FrameWidth
         {
-            get => _frameWidth;
-            set { if (SetProperty(ref _frameWidth, value)) _metadataState.FrameWidth = value; }
+            get => _metadataState.FrameWidth;
+            set => SetStateProperty(nameof(FrameWidth), _metadataState.FrameWidth, value ?? string.Empty, v => _metadataState.FrameWidth = v);
         }
 
         public string FrameHeight
         {
-            get => _frameHeight;
-            set { if (SetProperty(ref _frameHeight, value)) _metadataState.FrameHeight = value; }
+            get => _metadataState.FrameHeight;
+            set => SetStateProperty(nameof(FrameHeight), _metadataState.FrameHeight, value ?? string.Empty, v => _metadataState.FrameHeight = v);
         }
 
         public string FrameRate
         {
-            get => _frameRate;
-            set { if (SetProperty(ref _frameRate, value)) _metadataState.FrameRate = value; }
+            get => _metadataState.FrameRate;
+            set => SetStateProperty(nameof(FrameRate), _metadataState.FrameRate, value ?? string.Empty, v => _metadataState.FrameRate = v);
         }
 
         public string VideoBitrate
         {
-            get => _videoBitrate;
-            set { if (SetProperty(ref _videoBitrate, value)) _metadataState.VideoBitrate = value; }
+            get => _metadataState.VideoBitrate;
+            set => SetStateProperty(nameof(VideoBitrate), _metadataState.VideoBitrate, value ?? string.Empty, v => _metadataState.VideoBitrate = v);
         }
 
         public string VideoCompression
         {
-            get => _videoCompression;
-            set { if (SetProperty(ref _videoCompression, value)) _metadataState.VideoCompression = value; }
+            get => _metadataState.VideoCompression;
+            set => SetStateProperty(nameof(VideoCompression), _metadataState.VideoCompression, value ?? string.Empty, v => _metadataState.VideoCompression = v);
         }
 
         public string AudioSampleRate
         {
-            get => _audioSampleRate;
-            set { if (SetProperty(ref _audioSampleRate, value)) _metadataState.AudioSampleRate = value; }
+            get => _metadataState.AudioSampleRate;
+            set => SetStateProperty(nameof(AudioSampleRate), _metadataState.AudioSampleRate, value ?? string.Empty, v => _metadataState.AudioSampleRate = v);
         }
 
         public string AudioBitrate
         {
-            get => _audioBitrate;
-            set { if (SetProperty(ref _audioBitrate, value)) _metadataState.AudioBitrate = value; }
+            get => _metadataState.AudioBitrate;
+            set => SetStateProperty(nameof(AudioBitrate), _metadataState.AudioBitrate, value ?? string.Empty, v => _metadataState.AudioBitrate = v);
         }
 
         public string AudioFormat
         {
-            get => _audioFormat;
-            set { if (SetProperty(ref _audioFormat, value)) _metadataState.AudioFormat = value; }
+            get => _metadataState.AudioFormat;
+            set => SetStateProperty(nameof(AudioFormat), _metadataState.AudioFormat, value ?? string.Empty, v => _metadataState.AudioFormat = v);
         }
 
         public string ReleaseDateText
         {
-            get => _releaseDateText;
-            set { if (SetProperty(ref _releaseDateText, value)) _metadataState.ReleaseDateText = value; }
+            get => _metadataState.ReleaseDateText;
+            set => SetStateProperty(nameof(ReleaseDateText), _metadataState.ReleaseDateText, value ?? string.Empty, v => _metadataState.ReleaseDateText = v);
         }
 
         public DateTimeOffset ReleaseDate
         {
-            get => _releaseDate;
+            get => _metadataState.ReleaseDate;
             set
             {
                 var normalizedDate = value.Date;
-                if (SetProperty(ref _releaseDate, normalizedDate))
+                if (SetStateProperty(nameof(ReleaseDate), _metadataState.ReleaseDate, normalizedDate, v => _metadataState.ReleaseDate = v))
                 {
-                    _metadataState.ReleaseDate = normalizedDate;
-                    _releaseDateText = DisplayFormatHelper.FormatReleaseDateDisplayText(normalizedDate);
+                    _metadataState.ReleaseDateText = DisplayFormatHelper.FormatReleaseDateDisplayText(normalizedDate);
                     OnPropertyChanged(nameof(ReleaseDateText));
                     UpdateChangeState(nameof(ReleaseDate), normalizedDate.ToString("yyyy-MM-dd"));
                 }
@@ -689,7 +640,7 @@ namespace Archivio.Models
             get => _coverArtState.HasCoverArt;
             set
             {
-                if (SetProperty(ref _hasCoverArt, value))
+                if (SetStateProperty(nameof(HasCoverArt), _coverArtState.HasCoverArt, value, v => _coverArtState.HasCoverArt = v))
                 {
                     _coverArtState.HasCoverArt = value;
                     NotifyCoverArtPropertiesChanged();
@@ -702,7 +653,7 @@ namespace Archivio.Models
             get => _coverArtState.SelectedIndex;
             set
             {
-                if (SetProperty(ref _selectedCoverArtIndex, value))
+                if (SetStateProperty(nameof(SelectedCoverArtIndex), _coverArtState.SelectedIndex, value, v => _coverArtState.SelectedIndex = v))
                 {
                     _coverArtState.SelectedIndex = value;
                     OnPropertyChanged(nameof(IsImageControlsEnabled));
@@ -721,7 +672,7 @@ namespace Archivio.Models
             get => _coverArtState.IsDirty;
             set
             {
-                if (SetProperty(ref _isCoverArtDirty, value))
+                if (SetStateProperty(nameof(IsCoverArtDirty), _coverArtState.IsDirty, value, v => _coverArtState.IsDirty = v))
                 {
                     _coverArtState.IsDirty = value;
                     OnPropertyChanged(nameof(HasCoverArtChangesNotify));
@@ -734,7 +685,7 @@ namespace Archivio.Models
             get => _fileInfoState.IsDeleted;
             set
             {
-                if (SetProperty(ref _isDeleted, value)) _fileInfoState.IsDeleted = value;
+                SetStateProperty(nameof(IsDeleted), _fileInfoState.IsDeleted, value, v => _fileInfoState.IsDeleted = v);
             }
         }
 
@@ -779,27 +730,24 @@ namespace Archivio.Models
 
         public void ResetMetadataChangeTracking()
         {
-            _isApplyingInitialValues = true;
+            _changeTrackingState.IsApplyingInitialValues = true;
             try
             {
-                _originalValues[nameof(Title)] = _title;
-                _originalValues[nameof(Participants)] = _participants;
-                _originalValues[nameof(Category)] = _category;
-                _originalValues[nameof(Comment)] = _comment;
-                _originalValues[nameof(CatalogNumber)] = _catalogNumber;
-                _originalValues[nameof(Rating)] = _rating;
-                _originalValues[nameof(ContentDistributor)] = _contentDistributor;
-                _originalValues[nameof(Publisher)] = _publisher;
-                _originalValues[nameof(ReleaseDate)] = _releaseDate.ToString("yyyy-MM-dd");
-                _originalStructuredMetadata = StructuredMetadata.Clone();
-                _originalStructuredMetadataJson = MetadataChangeComparer.SerializeCanonical(_originalStructuredMetadata);
+                    _changeTrackingState.OriginalValues[nameof(Title)] = Title;
+                    _changeTrackingState.OriginalValues[nameof(Participants)] = Participants;
+                    _changeTrackingState.OriginalValues[nameof(Category)] = Category;
+                    _changeTrackingState.OriginalValues[nameof(Comment)] = Comment;
+                    _changeTrackingState.OriginalValues[nameof(CatalogNumber)] = CatalogNumber;
+                    _changeTrackingState.OriginalValues[nameof(Rating)] = Rating;
+                    _changeTrackingState.OriginalValues[nameof(ContentDistributor)] = ContentDistributor;
+                    _changeTrackingState.OriginalValues[nameof(Publisher)] = Publisher;
+                    _changeTrackingState.OriginalValues[nameof(ReleaseDate)] = ReleaseDate.ToString("yyyy-MM-dd");
+                    _changeTrackingState.OriginalStructuredMetadata = StructuredMetadata.Clone();
+                    _changeTrackingState.OriginalStructuredMetadataJson = MetadataChangeComparer.SerializeCanonical(_changeTrackingState.OriginalStructuredMetadata);
 
                 HasPendingChangesNotify();
             }
-            finally
-            {
-                _isApplyingInitialValues = false;
-            }
+            finally { _changeTrackingState.IsApplyingInitialValues = false; }
             ResetCustomMetadataChanges();
         }
 
@@ -826,19 +774,19 @@ namespace Archivio.Models
 
             var currentValue = propertyName switch
             {
-                nameof(Title) => _title,
-                nameof(Participants) => _participants,
-                nameof(Category) => _category,
-                nameof(Comment) => _comment,
-                nameof(CatalogNumber) => _catalogNumber,
-                nameof(Rating) => _rating,
-                nameof(ContentDistributor) => _contentDistributor,
-                nameof(Publisher) => _publisher,
-                nameof(ReleaseDate) => _releaseDate.ToString("yyyy-MM-dd"),
+                nameof(Title) => Title,
+                nameof(Participants) => Participants,
+                nameof(Category) => Category,
+                nameof(Comment) => Comment,
+                nameof(CatalogNumber) => CatalogNumber,
+                nameof(Rating) => Rating,
+                nameof(ContentDistributor) => ContentDistributor,
+                nameof(Publisher) => Publisher,
+                nameof(ReleaseDate) => ReleaseDate.ToString("yyyy-MM-dd"),
                 _ => string.Empty,
             };
 
-            var originalValue = _originalValues.TryGetValue(propertyName, out var storedValue)
+            var originalValue = _changeTrackingState.OriginalValues.TryGetValue(propertyName, out var storedValue)
                 ? storedValue
                 : string.Empty;
 
@@ -865,26 +813,23 @@ namespace Archivio.Models
         {
             if (snapshot == null) return;
 
-            _isApplyingInitialValues = true;
+            _changeTrackingState.IsApplyingInitialValues = true;
             try
             {
-                _originalValues[nameof(Title)] = snapshot.Title ?? string.Empty;
-                _originalValues[nameof(Participants)] = snapshot.Participants ?? string.Empty;
-                _originalValues[nameof(Category)] = snapshot.Category ?? string.Empty;
-                _originalValues[nameof(Comment)] = snapshot.Comment ?? string.Empty;
-                _originalValues[nameof(CatalogNumber)] = snapshot.CatalogNumber ?? string.Empty;
-                _originalValues[nameof(Rating)] = snapshot.Rating ?? string.Empty;
-                _originalValues[nameof(ContentDistributor)] = snapshot.ContentDistributor ?? string.Empty;
-                _originalValues[nameof(Publisher)] = snapshot.Publisher ?? string.Empty;
-                _originalValues[nameof(ReleaseDate)] = snapshot.ReleaseDate.ToString("yyyy-MM-dd");
-                _originalStructuredMetadata = snapshot.StructuredMetadata?.Clone() ?? new MetadataDocument();
-                _originalStructuredMetadataJson = MetadataChangeComparer.SerializeCanonical(_originalStructuredMetadata);
+                _changeTrackingState.OriginalValues[nameof(Title)] = snapshot.Title ?? string.Empty;
+                _changeTrackingState.OriginalValues[nameof(Participants)] = snapshot.Participants ?? string.Empty;
+                _changeTrackingState.OriginalValues[nameof(Category)] = snapshot.Category ?? string.Empty;
+                _changeTrackingState.OriginalValues[nameof(Comment)] = snapshot.Comment ?? string.Empty;
+                _changeTrackingState.OriginalValues[nameof(CatalogNumber)] = snapshot.CatalogNumber ?? string.Empty;
+                _changeTrackingState.OriginalValues[nameof(Rating)] = snapshot.Rating ?? string.Empty;
+                _changeTrackingState.OriginalValues[nameof(ContentDistributor)] = snapshot.ContentDistributor ?? string.Empty;
+                _changeTrackingState.OriginalValues[nameof(Publisher)] = snapshot.Publisher ?? string.Empty;
+                _changeTrackingState.OriginalValues[nameof(ReleaseDate)] = snapshot.ReleaseDate.ToString("yyyy-MM-dd");
+                _changeTrackingState.OriginalStructuredMetadata = snapshot.StructuredMetadata?.Clone() ?? new MetadataDocument();
+                _changeTrackingState.OriginalStructuredMetadataJson = MetadataChangeComparer.SerializeCanonical(_changeTrackingState.OriginalStructuredMetadata);
                 HasPendingChangesNotify();
             }
-            finally
-            {
-                _isApplyingInitialValues = false;
-            }
+            finally { _changeTrackingState.IsApplyingInitialValues = false; }
         }
 
         public bool HasMetadataChangesComparedTo(VideoMetadataSnapshot snapshot)
@@ -942,7 +887,7 @@ namespace Archivio.Models
 
         private void UpdateChangeState(string propertyName, string value)
         {
-            if (_isApplyingInitialValues)
+            if (_changeTrackingState.IsApplyingInitialValues)
             {
                 return;
             }

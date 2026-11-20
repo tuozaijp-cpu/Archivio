@@ -34,11 +34,17 @@ public sealed class VideoCoverArtState
 /// <summary>安定したカスタム項目IDと保存状態を管理する状態。</summary>
 public sealed class VideoChangeTrackingState
 {
+    private int _activeFileSaveOperationCount;
+    public bool IsApplyingInitialValues { get; set; }
     public HashSet<string> DirtyCustomFieldIds { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, string> OriginalValues { get; } = new(StringComparer.OrdinalIgnoreCase);
     public MetadataDocument OriginalStructuredMetadata { get; set; } = new();
     public string OriginalStructuredMetadataJson { get; set; } = string.Empty;
-    public int ActiveFileSaveOperationCount { get; set; }
+    public int ActiveFileSaveOperationCount => Volatile.Read(ref _activeFileSaveOperationCount);
+
+    public int IncrementSaveOperation() => Interlocked.Increment(ref _activeFileSaveOperationCount);
+    public int DecrementSaveOperation() => Interlocked.Decrement(ref _activeFileSaveOperationCount);
+    public void ResetSaveOperations() => Interlocked.Exchange(ref _activeFileSaveOperationCount, 0);
 }
 
 /// <summary>
@@ -47,8 +53,8 @@ public sealed class VideoChangeTrackingState
 /// </summary>
 public sealed class VideoMetadataState
 {
+    public bool IsLoaded { get; set; }
     public MetadataDocument StructuredMetadata { get; set; } = new();
-    public VideoTechnicalInfo TechnicalInfo { get; set; } = new();
     public string Title { get; set; } = string.Empty;
     public string Participants { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
